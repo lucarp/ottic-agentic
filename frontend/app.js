@@ -161,6 +161,57 @@ const ArtifactRenderers = {
         html += `<pre style="background: #0a0a0a; padding: 16px; border-radius: 6px; overflow-x: auto; border: 1px solid #333;"><code class="hljs language-${language}">${highlighted}</code></pre>`;
 
         return html;
+    },
+
+    fetched_link: (data) => {
+        const { url, title, content, content_type, fetch_timestamp, metadata, summary } = data;
+
+        let html = '';
+
+        // Header with URL and metadata
+        html += `<div style="border-bottom: 2px solid #333; padding-bottom: 16px; margin-bottom: 20px;">`;
+        html += `<h2 style="color: #fff; margin-bottom: 8px;">${title || 'Fetched Content'}</h2>`;
+        html += `<a href="${url}" target="_blank" rel="noopener noreferrer" style="color: #3b82f6; text-decoration: none; font-size: 14px; word-break: break-all;">
+            🔗 ${url}
+        </a>`;
+
+        if (metadata) {
+            html += `<div style="margin-top: 12px; display: flex; flex-wrap: wrap; gap: 16px; font-size: 13px; color: #94a3b8;">`;
+            if (metadata.author) {
+                html += `<span>✍️ ${metadata.author}</span>`;
+            }
+            if (metadata.published_date) {
+                const date = new Date(metadata.published_date).toLocaleDateString();
+                html += `<span>📅 ${date}</span>`;
+            }
+            if (fetch_timestamp) {
+                const fetchDate = new Date(fetch_timestamp).toLocaleString();
+                html += `<span>⏰ Fetched: ${fetchDate}</span>`;
+            }
+            html += `</div>`;
+        }
+        html += `</div>`;
+
+        // Summary if available
+        if (summary) {
+            html += `<div style="background: #1a2530; border-left: 4px solid #3b82f6; padding: 16px; margin-bottom: 20px; border-radius: 4px;">`;
+            html += `<h4 style="color: #3b82f6; margin-bottom: 8px; font-size: 14px; text-transform: uppercase;">Summary</h4>`;
+            html += `<p style="color: #e0e0e0; line-height: 1.6; margin: 0;">${summary}</p>`;
+            html += `</div>`;
+        }
+
+        // Main content
+        html += `<div style="color: #e0e0e0; line-height: 1.8; font-size: 15px;">`;
+        if (content_type === 'markdown') {
+            html += marked.parse(content);
+        } else {
+            // Plain text - preserve line breaks
+            const formattedContent = content.replace(/\n/g, '<br>');
+            html += formattedContent;
+        }
+        html += `</div>`;
+
+        return html;
     }
 };
 

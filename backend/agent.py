@@ -3,8 +3,12 @@
 import json
 import os
 import sys
+from datetime import datetime
 from typing import Any, AsyncGenerator, Optional
+from urllib.parse import urlparse
 
+import httpx
+from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from sqlalchemy.orm import Session
@@ -20,6 +24,7 @@ from schemas import (
     PaymentLinkArtifact,
     MarkdownArtifact,
     CodeArtifact,
+    FetchedLink,
 )
 
 
@@ -27,6 +32,10 @@ client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # Tool definitions for GPT-5 Responses API
 TOOLS = [
+    # OpenAI native web search tool
+    {
+        "type": "web_search"
+    },
     {
         "type": "function",
         "name": "create_csv_artifact",
@@ -82,10 +91,123 @@ TOOLS = [
         ),
         "parameters": CodeArtifact.model_json_schema()
     },
+    {
+        "type": "function",
+        "name": "fetch_url_content",
+        "description": (
+            "Fetches and extracts clean content from a specific URL. "
+            "Use this when you need to read, analyze, or extract information from a specific webpage. "
+            "Returns the main content in markdown format, along with metadata like title and publish date. "
+            "Best for when you need the full content of a page, not just search results."
+        ),
+        "parameters": FetchedLink.model_json_schema()
+    },
 ]
 
 
-def execute_artifact_tool(tool_name: str, tool_input: dict[str, Any], db: Session) -> dict[str, Any]:
+async def fetch_url_content_impl(url: str) -> dict[str, Any]:
+    """
+    Fetch and extract content from a URL.
+    Returns structured data with title, content (markdown), and metadata.
+    """
+    try:
+        # Validate URL
+        parsed = urlparse(url)
+        if not parsed.scheme or not parsed.netloc:
+            return {
+                "error": "Invalid URL format",
+                "url": url
+            }
+
+        # Fetch the page
+        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as client:
+            response = await client.get(url, headers={
+                "User-Agent": "Mozilla/5.0 (compatible; OtticBot/1.0)"
+            })
+            response.raise_for_status()
+
+        # Parse HTML
+        soup = BeautifulSoup(response.content, 'html.parser')
+
+        # Extract title
+        title = None
+        if soup.title:
+            title = soup.title.string.strip() if soup.title.string else None
+        if not title:
+            h1 = soup.find('h1')
+            if h1:
+                title = h1.get_text().strip()
+
+        # Remove script, style, and navigation elements
+        for tag in soup(['script', 'style', 'nav', 'header', 'footer', 'aside']):
+            tag.decompose()
+
+        # Try to find main content
+        main_content = None
+        for selector in ['main', 'article', '[role="main"]', '.main-content', '#content']:
+            main_content = soup.select_one(selector)
+            if main_content:
+                break
+
+        # If no main content found, use body
+        if not main_content:
+            main_content = soup.body if soup.body else soup
+
+        # Extract text content
+        text_content = main_content.get_text(separator='\n', strip=True)
+
+        # Clean up excessive newlines
+        lines = [line.strip() for line in text_content.split('\n')]
+        lines = [line for line in lines if line]  # Remove empty lines
+        clean_content = '\n\n'.join(lines)
+
+        # Extract metadata
+        metadata = {}
+
+        # Try to find author
+        author_meta = soup.find('meta', attrs={'name': 'author'})
+        if author_meta and author_meta.get('content'):
+            metadata['author'] = author_meta['content']
+
+        # Try to find publish date
+        date_meta = soup.find('meta', attrs={'property': 'article:published_time'}) or \
+                    soup.find('meta', attrs={'name': 'date'})
+        if date_meta and date_meta.get('content'):
+            metadata['published_date'] = date_meta['content']
+
+        # Try to find description
+        desc_meta = soup.find('meta', attrs={'name': 'description'}) or \
+                    soup.find('meta', attrs={'property': 'og:description'})
+        if desc_meta and desc_meta.get('content'):
+            metadata['description'] = desc_meta['content']
+
+        return {
+            "url": url,
+            "title": title or "Untitled",
+            "content": clean_content,
+            "content_type": "text",
+            "fetch_timestamp": datetime.utcnow().isoformat(),
+            "metadata": metadata if metadata else None
+        }
+
+    except httpx.HTTPStatusError as e:
+        return {
+            "error": f"HTTP {e.response.status_code}: {e.response.reason_phrase}",
+            "url": url
+        }
+    except httpx.RequestError as e:
+        return {
+            "error": f"Request failed: {str(e)}",
+            "url": url
+        }
+    except Exception as e:
+        return {
+            "error": f"Failed to fetch content: {str(e)}",
+            "url": url
+        }
+
+
+async def execute_artifact_tool(tool_name: str, tool_input: dict[str, Any], db: Session) -> dict[str, Any]:
     """Execute an artifact creation tool."""
     try:
         # Map tool name to artifact type and schema
@@ -96,6 +218,7 @@ def execute_artifact_tool(tool_name: str, tool_input: dict[str, Any], db: Sessio
             "create_payment_link_artifact": ("payment_link", PaymentLinkArtifact),
             "create_markdown_artifact": ("markdown", MarkdownArtifact),
             "create_code_artifact": ("code", CodeArtifact),
+            "fetch_url_content": ("fetched_link", FetchedLink),
         }
 
         if tool_name not in artifact_mapping:
@@ -118,6 +241,27 @@ def execute_artifact_tool(tool_name: str, tool_input: dict[str, Any], db: Sessio
             tool_input = json.loads(tool_input)
             sys.stderr.write(f"Parsed tool_input: {tool_input}\n")
             sys.stderr.flush()
+
+        # Special handling for fetch_url_content - fetch the actual URL
+        if tool_name == "fetch_url_content":
+            url = tool_input.get("url")
+            if not url:
+                return {
+                    "success": False,
+                    "error": "URL is required for fetch_url_content"
+                }
+
+            # Fetch the URL content
+            fetched_data = await fetch_url_content_impl(url)
+
+            if "error" in fetched_data:
+                return {
+                    "success": False,
+                    "error": fetched_data["error"]
+                }
+
+            # Use the fetched data as the tool_input
+            tool_input = fetched_data
 
         # Validate input against Pydantic schema
         validated_data = schema_class(**tool_input)
@@ -291,7 +435,7 @@ async def run_agent(
                     }
 
                     # Execute the tool
-                    result = execute_artifact_tool(tool_name, tool_input, db)
+                    result = await execute_artifact_tool(tool_name, tool_input, db)
 
                     # Collect tool output for submission back to GPT-5
                     output_str = json.dumps(result) if isinstance(result, dict) else str(result)

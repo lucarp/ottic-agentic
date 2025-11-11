@@ -79,6 +79,17 @@ class CodeArtifact(BaseModel):
     description: Optional[str] = Field(default=None, description="Description of what the code does")
 
 
+class FetchedLink(BaseModel):
+    """Content fetched from a URL."""
+    url: str = Field(description="The URL that was fetched")
+    title: Optional[str] = Field(default=None, description="Page title extracted from content")
+    content: str = Field(description="Main content extracted from the page (markdown or text)")
+    content_type: str = Field(default="markdown", description="Format of the content: 'markdown', 'html', or 'text'")
+    fetch_timestamp: Optional[str] = Field(default=None, description="When the content was fetched")
+    metadata: Optional[dict[str, Any]] = Field(default=None, description="Additional metadata (author, publish date, etc.)")
+    summary: Optional[str] = Field(default=None, description="Optional AI-generated summary of the content")
+
+
 class WebSocketMessage(BaseModel):
     """Base WebSocket message schema."""
     type: str

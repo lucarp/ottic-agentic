@@ -24,6 +24,24 @@ Each artifact type has:
 | `payment_link` | Stripe payment interface | Payments, donations |
 | `markdown` | Markdown documents | Reports, documentation |
 | `code` | Syntax-highlighted code snippets | Code examples, scripts |
+| `fetched_link` | Extracted web page content | Reading articles, documentation |
+
+## Web Search & URL Fetching
+
+The platform supports two ways to access web content:
+
+### 1. Web Search (OpenAI Native)
+Uses OpenAI's built-in `web_search` tool for real-time internet access with:
+- Automatic citation extraction
+- Source attribution
+- Up-to-date information retrieval
+
+### 2. URL Content Fetching
+Custom tool to fetch and extract content from specific URLs:
+- Clean content extraction (removes ads, navigation)
+- Automatic metadata parsing (title, author, date)
+- Markdown-formatted output
+- Perfect for reading full articles or documentation
 
 ## Setup
 
@@ -92,6 +110,16 @@ Show me a Python function to calculate factorial
 ### Create a Markdown Document
 ```
 Write a project summary document about this POC
+```
+
+### Search the Web
+```
+What are the latest developments in AI reasoning models?
+```
+
+### Fetch and Read a URL
+```
+Can you read and summarize this article: https://example.com/article
 ```
 
 ## How It Works
