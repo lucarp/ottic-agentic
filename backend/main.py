@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from agent_streaming import run_agent_streaming as run_agent
+from agent_agentic import run_agent_agentic as run_agent
 from database import SessionLocal, init_db
 
 # Configure production logging
