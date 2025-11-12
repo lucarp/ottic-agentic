@@ -23,16 +23,27 @@ from schemas import (
     MarkdownArtifact,
     CodeArtifact,
     FetchedLink,
+    WebSearchTool,
 )
 
 load_dotenv()
 client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
-logger = logging.getLogger(__name__)
+# Initialize Tavily client for web search
+try:
+    from tavily import TavilyClient
+    tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
+    TAVILY_AVAILABLE = True
+    logger = logging.getLogger(__name__)
+    logger.info("✅ Tavily AI Search initialized")
+except Exception as e:
+    tavily_client = None
+    TAVILY_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning(f"⚠️  Tavily AI Search not available: {e}")
 
 # Tool definitions
-TOOLS = [
-    {"type": "web_search"},  # OpenAI's native web search tool
+TOOLS_WITHOUT_WEB_SEARCH = [
     {"type": "function", "name": "create_csv_artifact", "description": "Creates a CSV data artifact with headers and rows.", "parameters": CsvArtifact.model_json_schema()},
     {"type": "function", "name": "create_html_artifact", "description": "Creates an HTML artifact that will be rendered in the browser.", "parameters": HtmlArtifact.model_json_schema()},
     {"type": "function", "name": "create_chart_artifact", "description": "Creates a chart/visualization artifact using Chart.js.", "parameters": ChartArtifact.model_json_schema()},
@@ -41,6 +52,17 @@ TOOLS = [
     {"type": "function", "name": "create_code_artifact", "description": "Creates a code snippet artifact with syntax highlighting.", "parameters": CodeArtifact.model_json_schema()},
     {"type": "function", "name": "fetch_url_content", "description": "Fetches and extracts clean content from a specific URL.", "parameters": FetchedLink.model_json_schema()},
 ]
+
+# Tavily AI custom web search tool (executed locally, not by OpenAI)
+TAVILY_WEB_SEARCH_TOOL = {
+    "type": "function",
+    "name": "web_search",
+    "description": "Search the web for current information using Tavily AI. Use this when you need up-to-date information not in your training data.",
+    "parameters": WebSearchTool.model_json_schema()
+}
+
+# Enable Tavily web search if available
+TOOLS = TOOLS_WITHOUT_WEB_SEARCH + ([TAVILY_WEB_SEARCH_TOOL] if TAVILY_AVAILABLE else [])
 
 
 async def fetch_url_content_impl(url: str) -> dict[str, Any]:
@@ -101,9 +123,67 @@ async def fetch_url_content_impl(url: str) -> dict[str, Any]:
         return {"error": f"Failed to fetch: {str(e)}", "url": url}
 
 
+async def tavily_search_impl(query: str, max_results: int = 5) -> dict[str, Any]:
+    """Perform web search using Tavily AI."""
+    try:
+        if not TAVILY_AVAILABLE or not tavily_client:
+            return {"error": "Tavily AI Search is not available. Please configure TAVILY_API_KEY."}
+
+        logger.info(f"🔍 Tavily search: '{query}' (max_results={max_results})")
+
+        # Perform search
+        search_result = tavily_client.search(query=query, max_results=max_results)
+
+        # Format results
+        results = []
+        for idx, result in enumerate(search_result.get("results", []), 1):
+            results.append({
+                "position": idx,
+                "title": result.get("title", ""),
+                "url": result.get("url", ""),
+                "content": result.get("content", ""),
+                "score": result.get("score", 0.0),
+            })
+
+        logger.info(f"✅ Found {len(results)} results for: '{query}'")
+
+        return {
+            "query": query,
+            "results": results,
+            "total_results": len(results),
+            "search_timestamp": datetime.utcnow().isoformat()
+        }
+
+    except Exception as e:
+        logger.error(f"❌ Tavily search failed: {e}")
+        return {"error": f"Search failed: {str(e)}", "query": query}
+
+
 async def execute_artifact_tool(tool_name: str, tool_input: dict[str, Any], db: Session) -> dict[str, Any]:
     """Execute artifact tool."""
     try:
+        # Handle web_search specially - it returns results but doesn't create an artifact
+        if tool_name == "web_search":
+            if isinstance(tool_input, str):
+                tool_input = json.loads(tool_input)
+
+            query = tool_input.get("query")
+            max_results = tool_input.get("max_results", 5)
+
+            if not query:
+                return {"success": False, "error": "Query is required for web search"}
+
+            search_result = await tavily_search_impl(query, max_results)
+
+            if "error" in search_result:
+                return {"success": False, "error": search_result["error"]}
+
+            return {
+                "success": True,
+                "search_results": search_result,
+                "message": f"Found {search_result['total_results']} results for: {query}"
+            }
+
         artifact_mapping = {
             "create_csv_artifact": ("csv", CsvArtifact),
             "create_html_artifact": ("html", HtmlArtifact),
@@ -187,20 +267,30 @@ async def run_agent_agentic(
         yield {"type": "text_delta", "delta": "🤖 Starting multi-turn agent...\n"}
 
         # Add timeout to initial create call
+        # Log exactly where we are
+        import time
+        start_time = time.time()
+        logger.info("📍 About to call client.responses.create() - this is where timeout occurs")
+
         try:
             async with asyncio.timeout(120.0):  # 2-minute timeout
+                logger.info("📍 Inside timeout block, calling OpenAI API...")
                 response = await client.responses.create(
                     model="gpt-5",
                     input=formatted_input,
-                    reasoning={"effort": "medium"},
+                    reasoning={"effort": "low"},  # Changed from "medium" to "low" for faster responses
                     text={"verbosity": "medium"},
                     tools=TOOLS,
                 )
+                elapsed = time.time() - start_time
+                logger.info(f"✅ OpenAI API call completed in {elapsed:.1f}s")
         except asyncio.TimeoutError:
-            logger.error("⏱️  TIMEOUT: Initial response.create() exceeded 120s")
+            elapsed = time.time() - start_time
+            logger.error(f"⏱️  TIMEOUT: client.responses.create() exceeded 120s (actual: {elapsed:.1f}s)")
+            logger.error("📍 Timeout location: agent_agentic.py:192 - initial response creation with OpenAI API")
             yield {
                 "type": "error",
-                "error": "Request timeout: The AI model took longer than 120s to create the initial response. This can happen with very complex requests. Please try simplifying your request or try again."
+                "error": f"Request timeout: The OpenAI API call took longer than 120s ({elapsed:.1f}s actual). This happens when the model needs extensive web search. Try a simpler request or try again."
             }
             return
 

@@ -90,6 +90,12 @@ class FetchedLink(BaseModel):
     summary: Optional[str] = Field(default=None, description="Optional AI-generated summary of the content")
 
 
+class WebSearchTool(BaseModel):
+    """Tool for performing web searches using Tavily AI."""
+    query: str = Field(description="The search query to find relevant web information")
+    max_results: int = Field(default=5, description="Maximum number of search results to return (1-10)", ge=1, le=10)
+
+
 class WebSocketMessage(BaseModel):
     """Base WebSocket message schema."""
     type: str
