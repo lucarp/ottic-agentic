@@ -8,7 +8,8 @@ const state = {
     artifacts: [],
     activeArtifactId: null,
     isConnected: false,
-    charts: {}  // Store Chart.js instances
+    charts: {},  // Store Chart.js instances
+    currentMessageDiv: null  // Track current streaming message
 };
 
 // DOM elements
@@ -269,7 +270,16 @@ function handleMessage(message) {
         case 'reasoning':
             addReasoningMessage(message.content);
             break;
+        case 'text_delta':
+            // STREAMING: Accumulate text deltas
+            handleTextDelta(message.delta);
+            break;
+        case 'text_done':
+            // STREAMING: Finalize current message
+            handleTextDone();
+            break;
         case 'assistant_message':
+            // Legacy: Full message at once
             addAssistantMessage(message.content);
             break;
         case 'tool_execution':
@@ -328,6 +338,28 @@ function addErrorMessage(error) {
     messageDiv.textContent = `❌ Error: ${error}`;
     terminalMessages.appendChild(messageDiv);
     scrollToBottom();
+}
+
+// ============================================================================
+// STREAMING: Text Delta Handling
+// ============================================================================
+
+function handleTextDelta(delta) {
+    // Create message div if it doesn't exist
+    if (!state.currentMessageDiv) {
+        state.currentMessageDiv = document.createElement('div');
+        state.currentMessageDiv.className = 'message assistant-message';
+        terminalMessages.appendChild(state.currentMessageDiv);
+    }
+
+    // Append delta to current message
+    state.currentMessageDiv.textContent += delta;
+    scrollToBottom();
+}
+
+function handleTextDone() {
+    // Finalize current streaming message
+    state.currentMessageDiv = null;
 }
 
 function scrollToBottom() {

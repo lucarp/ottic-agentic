@@ -319,18 +319,18 @@ async def run_agent(
         sys.stderr.write(f"Creating GPT-5 response...\n")
         sys.stderr.flush()
 
-        # Create initial response with GPT-5
+        # Create initial response with GPT-5 (STREAMING ENABLED)
         try:
-            response = await client.responses.create(
+            response_stream = await client.responses.create(
                 model="gpt-5",
                 input=user_input,
                 reasoning={"effort": "medium"},
                 text={"verbosity": "medium"},
                 tools=TOOLS,
                 previous_response_id=previous_response_id,
-                stream=False
+                stream=True  # ✅ STREAMING ENABLED
             )
-            sys.stderr.write(f"GPT-5 response received successfully\n")
+            sys.stderr.write(f"GPT-5 streaming response created\n")
             sys.stderr.flush()
         except Exception as api_error:
             sys.stderr.write(f"\n=== GPT-5 API ERROR ===\n")
@@ -339,24 +339,72 @@ async def run_agent(
             sys.stderr.flush()
             raise
 
-        response_id = response.id
-        sys.stderr.write(f"Response ID: {response_id}\n")
-        sys.stderr.flush()
+        # Process streaming chunks
+        response_id = None
+        text_buffer = ""
+        reasoning_buffer = ""
+        tool_calls = {}  # Buffer for accumulating tool call arguments
 
-        # Loop to handle multiple rounds of tool calling
-        while True:
-            tool_outputs = []
-            has_function_calls = False
-
-            sys.stderr.write(f"Processing response with {len(response.output)} output items\n")
-            sys.stderr.flush()
-
-            # Process the response
-            for idx, item in enumerate(response.output):
-                sys.stderr.write(f"Processing item {idx}: type={item.type}\n")
+        # Loop to handle streaming chunks
+        async for chunk in response_stream:
+            # Capture response ID from first chunk
+            if response_id is None and hasattr(chunk, 'response_id'):
+                response_id = chunk.response_id
+                sys.stderr.write(f"Response ID: {response_id}\n")
                 sys.stderr.flush()
-                # Handle reasoning output
-                if item.type == "reasoning":
+
+            chunk_type = chunk.type if hasattr(chunk, 'type') else None
+
+            # Handle text deltas (STREAMING)
+            if chunk_type == "response.output_item.added":
+                # New output item starting
+                pass
+
+            elif chunk_type == "response.output_item.done":
+                # Output item completed - flush any buffers
+                if text_buffer:
+                    yield {
+                        "type": "text_done",
+                        "response_id": response_id
+                    }
+                    text_buffer = ""
+
+            elif chunk_type == "response.content_part.added":
+                # Content part added
+                pass
+
+            elif chunk_type == "response.content_part.delta":
+                # STREAMING TEXT DELTA
+                if hasattr(chunk, 'delta') and chunk.delta:
+                    text_buffer += chunk.delta
+
+                    # Send delta if buffer reaches threshold (simple chunking)
+                    if len(text_buffer) >= 50:
+                        yield {
+                            "type": "text_delta",
+                            "delta": text_buffer,
+                            "response_id": response_id
+                        }
+                        text_buffer = ""
+
+            elif chunk_type == "response.content_part.done":
+                # Flush remaining text buffer
+                if text_buffer:
+                    yield {
+                        "type": "text_delta",
+                        "delta": text_buffer,
+                        "response_id": response_id
+                    }
+                    text_buffer = ""
+
+            # Handle reasoning (can be done or delta)
+            elif chunk_type == "response.output_item.done" and hasattr(chunk, 'item'):
+                if chunk.item.type == "message":
+                    # Final message - already handled via deltas
+                    pass
+
+            # Legacy fallback for non-streaming chunks
+            elif hasattr(chunk, 'type') and chunk.type == "reasoning":
                     sys.stderr.write(f"Found reasoning item\n")
                     sys.stderr.write(f"Has summary: {hasattr(item, 'summary')}\n")
                     if hasattr(item, 'summary'):

@@ -10,7 +10,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from agent import run_agent
+from agent_streaming import run_agent_streaming as run_agent
 from database import SessionLocal, init_db
 
 # Initialize FastAPI
