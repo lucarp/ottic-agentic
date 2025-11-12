@@ -1,5 +1,6 @@
 """Simple production-ready streaming implementation for GPT-5 agent."""
 
+import asyncio
 import json
 import logging
 import os
@@ -201,86 +202,115 @@ async def run_agent_streaming(
         current_output = None
         event_count = 0
         function_calls = {}  # Track function call metadata by item_id
+        start_time = asyncio.get_event_loop().time()
 
-        # Process stream
-        async for event in stream:
-            event_count += 1
+        # Timeout configuration (2 minutes for complex requests)
+        STREAM_TIMEOUT = 120.0
+        logger.info(f"⏱️  Stream timeout set to {STREAM_TIMEOUT}s")
 
-            # Track response ID from event.response.id
-            if not response_id:
-                if hasattr(event, 'response') and hasattr(event.response, 'id') and event.response.id:
-                    response_id = event.response.id
+        # Create event iterator with timeout wrapper
+        async def stream_with_timeout():
+            """Wrapper to add timeout checking to stream."""
+            try:
+                async for event in stream:
+                    # Check if we've exceeded total timeout
+                    elapsed = asyncio.get_event_loop().time() - start_time
+                    if elapsed > STREAM_TIMEOUT:
+                        logger.error(f"⏱️  TIMEOUT: Stream exceeded {STREAM_TIMEOUT}s (elapsed: {elapsed:.1f}s)")
+                        raise asyncio.TimeoutError(f"Stream exceeded {STREAM_TIMEOUT}s")
+                    yield event
+            except Exception as e:
+                logger.error(f"❌ Stream error: {type(e).__name__}: {e}")
+                raise
 
-            event_type = event.type if hasattr(event, 'type') else None
+        try:
+            # Process stream with timeout tracking
+            async for event in stream_with_timeout():
+                event_count += 1
 
-            # Text delta streaming
-            if event_type == "response.output_text.delta":
-                if hasattr(event, 'delta'):
-                    delta_text = str(event.delta)
-                    text_buffer += delta_text
-                    yield {"type": "text_delta", "delta": delta_text, "response_id": response_id}
+                # Track response ID from event.response.id
+                if not response_id:
+                    if hasattr(event, 'response') and hasattr(event.response, 'id') and event.response.id:
+                        response_id = event.response.id
 
-            elif event_type == "response.text.done":
-                # Text content is complete (no buffering needed since we send immediately)
-                pass
+                event_type = event.type if hasattr(event, 'type') else None
 
-            # Function call handling
-            elif event_type == "response.function_call_arguments.delta":
-                pass  # Tool arguments streaming
+                # Text delta streaming
+                if event_type == "response.output_text.delta":
+                    if hasattr(event, 'delta'):
+                        delta_text = str(event.delta)
+                        text_buffer += delta_text
+                        yield {"type": "text_delta", "delta": delta_text, "response_id": response_id}
 
-            elif event_type == "response.function_call_arguments.done":
-                # Look up function call metadata by item_id
-                if hasattr(event, 'item_id') and event.item_id in function_calls and hasattr(event, 'arguments'):
-                    func_metadata = function_calls[event.item_id]
-                    tool_name = func_metadata['name']
-                    tool_args = event.arguments
-                    call_id = func_metadata['call_id']
+                elif event_type == "response.text.done":
+                    # Text content is complete (no buffering needed since we send immediately)
+                    pass
 
-                    # Handle artifact creation tools
-                    if tool_name in ['create_csv_artifact', 'create_html_artifact', 'create_chart_artifact',
-                                       'create_payment_link_artifact', 'create_markdown_artifact',
-                                       'create_code_artifact', 'fetch_url_content']:
-                        # Notify start
-                        yield {"type": "tool_execution", "tool_name": tool_name, "status": "started"}
+                # Function call handling
+                elif event_type == "response.function_call_arguments.delta":
+                    pass  # Tool arguments streaming
 
-                        # Execute
-                        result = await execute_artifact_tool(tool_name, tool_args, db)
+                elif event_type == "response.function_call_arguments.done":
+                    # Look up function call metadata by item_id
+                    if hasattr(event, 'item_id') and event.item_id in function_calls and hasattr(event, 'arguments'):
+                        func_metadata = function_calls[event.item_id]
+                        tool_name = func_metadata['name']
+                        tool_args = event.arguments
+                        call_id = func_metadata['call_id']
 
-                        # Notify completion
-                        yield {"type": "tool_execution", "tool_name": tool_name, "status": "completed" if result.get("success") else "failed", "output": result}
+                        # Handle artifact creation tools
+                        if tool_name in ['create_csv_artifact', 'create_html_artifact', 'create_chart_artifact',
+                                           'create_payment_link_artifact', 'create_markdown_artifact',
+                                           'create_code_artifact', 'fetch_url_content']:
+                            # Notify start
+                            yield {"type": "tool_execution", "tool_name": tool_name, "status": "started"}
 
-                        # Send artifact if created
-                        if result.get("success"):
-                            import uuid
-                            artifact = get_artifact_by_id(db, uuid.UUID(result["artifact_id"]))
-                            if artifact:
-                                yield {
-                                    "type": "artifact_created",
-                                    "artifact": {
-                                        "id": str(artifact.id),
-                                        "type": artifact.type,
-                                        "status": artifact.status.value,
-                                        "data": artifact.data,
-                                        "artifact_metadata": artifact.artifact_metadata,
-                                        "created_at": artifact.created_at.isoformat()
+                            # Execute
+                            result = await execute_artifact_tool(tool_name, tool_args, db)
+
+                            # Notify completion
+                            yield {"type": "tool_execution", "tool_name": tool_name, "status": "completed" if result.get("success") else "failed", "output": result}
+
+                            # Send artifact if created
+                            if result.get("success"):
+                                import uuid
+                                artifact = get_artifact_by_id(db, uuid.UUID(result["artifact_id"]))
+                                if artifact:
+                                    yield {
+                                        "type": "artifact_created",
+                                        "artifact": {
+                                            "id": str(artifact.id),
+                                            "type": artifact.type,
+                                            "status": artifact.status.value,
+                                            "data": artifact.data,
+                                            "artifact_metadata": artifact.artifact_metadata,
+                                            "created_at": artifact.created_at.isoformat()
+                                        }
                                     }
-                                }
 
-            elif event_type == "response.completed":
-                # Final completion
-                logger.info(f"✅ Response completed (total events: {event_count})")
-                yield {"type": "response_complete", "response_id": response_id}
-                break
+                elif event_type == "response.completed":
+                    # Final completion
+                    elapsed = asyncio.get_event_loop().time() - start_time
+                    logger.info(f"✅ Response completed (total events: {event_count}, elapsed: {elapsed:.1f}s)")
+                    yield {"type": "response_complete", "response_id": response_id}
+                    break
 
-            # Track output items (may contain function call names)
-            elif event_type == "response.output_item.added":
-                if hasattr(event, 'item') and hasattr(event.item, 'type') and event.item.type == 'function_call':
-                    # Store function call metadata for later use
-                    function_calls[event.item.id] = {
-                        'name': event.item.name,
-                        'call_id': event.item.call_id
-                    }
-                    logger.info(f"🔧 Function call added: {event.item.name}")
+                # Track output items (may contain function call names)
+                elif event_type == "response.output_item.added":
+                    if hasattr(event, 'item') and hasattr(event.item, 'type') and event.item.type == 'function_call':
+                        # Store function call metadata for later use
+                        function_calls[event.item.id] = {
+                            'name': event.item.name,
+                            'call_id': event.item.call_id
+                        }
+                        logger.info(f"🔧 Function call added: {event.item.name}")
+
+        except asyncio.TimeoutError as e:
+            logger.error(f"⏱️  TIMEOUT: {str(e)}")
+            yield {
+                "type": "error",
+                "error": f"Request timeout: The AI model took longer than {STREAM_TIMEOUT}s to respond. This can happen with complex requests requiring web search or extensive reasoning. Please try simplifying your request or try again."
+            }
 
     except Exception as e:
         logger.error(f"❌ ERROR in streaming agent: {type(e).__name__}: {e}", exc_info=True)
