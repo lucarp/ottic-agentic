@@ -30,7 +30,6 @@ app.add_middleware(
 async def startup_event():
     """Initialize database tables on startup."""
     init_db()
-    print("Database initialized successfully")
 
 
 @app.get("/")
@@ -55,7 +54,6 @@ async def websocket_endpoint(websocket: WebSocket):
     - Server sends: Various message types (assistant_message, tool_execution, artifact_created, error)
     """
     await websocket.accept()
-    print("WebSocket connection established")
 
     # Session state
     db = SessionLocal()
@@ -111,7 +109,6 @@ async def websocket_endpoint(websocket: WebSocket):
                     "timestamp": datetime.utcnow().isoformat()
                 })
             except Exception as e:
-                print(f"Error processing message: {e}")
                 await websocket.send_json({
                     "type": "error",
                     "error": str(e),
@@ -119,9 +116,9 @@ async def websocket_endpoint(websocket: WebSocket):
                 })
 
     except WebSocketDisconnect:
-        print("WebSocket connection closed")
+        pass
     except Exception as e:
-        print(f"WebSocket error: {e}")
+        pass
     finally:
         db.close()
 

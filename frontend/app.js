@@ -266,6 +266,8 @@ function handleMessage(message) {
     switch (message.type) {
         case 'user_message':
             addUserMessage(message.content);
+            // Reset streaming state for new conversation turn
+            state.currentMessageDiv = null;
             break;
         case 'reasoning':
             addReasoningMessage(message.content);
@@ -437,14 +439,20 @@ function selectArtifact(artifactId) {
 
 function sendMessage() {
     const message = userInput.value.trim();
-    if (!message || !state.isConnected) return;
+    console.log('sendMessage called, message:', message, 'isConnected:', state.isConnected);
+    if (!message || !state.isConnected) {
+        console.log('Message not sent - empty or not connected');
+        return;
+    }
 
+    console.log('Sending message to WebSocket');
     state.ws.send(JSON.stringify({
         type: 'user_message',
         content: message
     }));
 
     userInput.value = '';
+    console.log('Message sent successfully');
 }
 
 sendButton.addEventListener('click', sendMessage);

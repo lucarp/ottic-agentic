@@ -29,7 +29,7 @@ client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 # Tool definitions
 TOOLS = [
-    {"type": "web_search"},
+    {"type": "web_search"},  # OpenAI's native web search tool
     {"type": "function", "name": "create_csv_artifact", "description": "Creates a CSV data artifact with headers and rows.", "parameters": CsvArtifact.model_json_schema()},
     {"type": "function", "name": "create_html_artifact", "description": "Creates an HTML artifact that will be rendered in the browser.", "parameters": HtmlArtifact.model_json_schema()},
     {"type": "function", "name": "create_chart_artifact", "description": "Creates a chart/visualization artifact using Chart.js.", "parameters": ChartArtifact.model_json_schema()},
@@ -161,77 +161,96 @@ async def run_agent_streaming(
             text={"verbosity": "medium"},
             tools=TOOLS,
             previous_response_id=previous_response_id,
-            stream=True  # ✅ STREAMING ENABLED
+            stream=True
         )
 
         # Streaming state
         response_id = None
         text_buffer = ""
         current_output = None
+        event_count = 0
+        function_calls = {}  # Track function call metadata by item_id
 
         # Process stream
         async for event in stream:
-            # Track response ID
-            if hasattr(event, 'response_id') and event.response_id:
-                response_id = event.response_id
+            event_count += 1
+
+            # Track response ID from event.response.id
+            if not response_id:
+                if hasattr(event, 'response') and hasattr(event.response, 'id') and event.response.id:
+                    response_id = event.response.id
 
             event_type = event.type if hasattr(event, 'type') else None
 
             # Text delta streaming
-            if event_type == "response.output_item.added":
-                current_output = event.item if hasattr(event, 'item') else None
-
-            elif event_type == "response.content_part.delta":
+            if event_type == "response.output_text.delta":
                 if hasattr(event, 'delta'):
-                    text_buffer += str(event.delta)
-                    # Send in chunks for smooth rendering
-                    if len(text_buffer) >= 30:
-                        yield {"type": "text_delta", "delta": text_buffer, "response_id": response_id}
-                        text_buffer = ""
+                    delta_text = str(event.delta)
+                    text_buffer += delta_text
+                    yield {"type": "text_delta", "delta": delta_text, "response_id": response_id}
 
-            elif event_type == "response.content_part.done":
-                # Flush remaining buffer
-                if text_buffer:
-                    yield {"type": "text_delta", "delta": text_buffer, "response_id": response_id}
-                    text_buffer = ""
+            elif event_type == "response.text.done":
+                # Text content is complete (no buffering needed since we send immediately)
+                pass
 
             # Function call handling
+            elif event_type == "response.function_call_arguments.delta":
+                pass  # Tool arguments streaming
+
             elif event_type == "response.function_call_arguments.done":
-                if hasattr(event, 'call_id') and hasattr(event, 'name') and hasattr(event, 'arguments'):
-                    tool_name = event.name
+                # Look up function call metadata by item_id
+                if hasattr(event, 'item_id') and event.item_id in function_calls and hasattr(event, 'arguments'):
+                    func_metadata = function_calls[event.item_id]
+                    tool_name = func_metadata['name']
                     tool_args = event.arguments
-                    call_id = event.call_id
+                    call_id = func_metadata['call_id']
 
-                    # Notify start
-                    yield {"type": "tool_execution", "tool_name": tool_name, "status": "started"}
+                    # Handle artifact creation tools
+                    if tool_name in ['create_csv_artifact', 'create_html_artifact', 'create_chart_artifact',
+                                       'create_payment_link_artifact', 'create_markdown_artifact',
+                                       'create_code_artifact', 'fetch_url_content']:
+                        # Notify start
+                        yield {"type": "tool_execution", "tool_name": tool_name, "status": "started"}
 
-                    # Execute
-                    result = await execute_artifact_tool(tool_name, tool_args, db)
+                        # Execute
+                        result = await execute_artifact_tool(tool_name, tool_args, db)
 
-                    # Notify completion
-                    yield {"type": "tool_execution", "tool_name": tool_name, "status": "completed" if result.get("success") else "failed", "output": result}
+                        # Notify completion
+                        yield {"type": "tool_execution", "tool_name": tool_name, "status": "completed" if result.get("success") else "failed", "output": result}
 
-                    # Send artifact if created
-                    if result.get("success"):
-                        import uuid
-                        artifact = get_artifact_by_id(db, uuid.UUID(result["artifact_id"]))
-                        if artifact:
-                            yield {
-                                "type": "artifact_created",
-                                "artifact": {
-                                    "id": str(artifact.id),
-                                    "type": artifact.type,
-                                    "status": artifact.status.value,
-                                    "data": artifact.data,
-                                    "artifact_metadata": artifact.artifact_metadata,
-                                    "created_at": artifact.created_at.isoformat()
+                        # Send artifact if created
+                        if result.get("success"):
+                            import uuid
+                            artifact = get_artifact_by_id(db, uuid.UUID(result["artifact_id"]))
+                            if artifact:
+                                yield {
+                                    "type": "artifact_created",
+                                    "artifact": {
+                                        "id": str(artifact.id),
+                                        "type": artifact.type,
+                                        "status": artifact.status.value,
+                                        "data": artifact.data,
+                                        "artifact_metadata": artifact.artifact_metadata,
+                                        "created_at": artifact.created_at.isoformat()
+                                    }
                                 }
-                            }
 
-            elif event_type == "response.done":
+            elif event_type == "response.completed":
                 # Final completion
                 yield {"type": "response_complete", "response_id": response_id}
                 break
 
+            # Track output items (may contain function call names)
+            elif event_type == "response.output_item.added":
+                if hasattr(event, 'item') and hasattr(event.item, 'type') and event.item.type == 'function_call':
+                    # Store function call metadata for later use
+                    function_calls[event.item.id] = {
+                        'name': event.item.name,
+                        'call_id': event.item.call_id
+                    }
+
     except Exception as e:
+        print(f"ERROR in streaming agent: {type(e).__name__}: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
         yield {"type": "error", "error": str(e)}
