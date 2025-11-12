@@ -146,26 +146,40 @@ async def execute_artifact_tool(tool_name: str, tool_input: dict[str, Any], db: 
 async def run_agent_streaming(
     user_input: str,
     db: Session,
-    previous_response_id: Optional[str] = None
+    previous_response_id: Optional[str] = None,
+    conversation_history: list[dict[str, str]] = None
 ) -> AsyncGenerator[dict[str, Any], None]:
     """
     Run GPT-5 agent with STREAMING enabled.
-    Simple, production-ready implementation.
+    Production-ready implementation with conversation memory via context injection.
 
-    Note: previous_response_id is not used with custom function tools
-    because the API expects tool outputs to be submitted, which breaks
-    the streaming flow. Each request is independent.
+    Conversation memory is maintained by injecting previous messages as context
+    rather than using previous_response_id (which breaks with custom function tools).
     """
     try:
+        # Format input with conversation context
+        formatted_input = user_input
+        if conversation_history and len(conversation_history) > 0:
+            # Build context from conversation history
+            context_parts = ["Previous conversation:"]
+            for msg in conversation_history:
+                role = msg.get("role", "user")
+                content = msg.get("content", "")
+                if role == "user":
+                    context_parts.append(f"User: {content}")
+                elif role == "assistant":
+                    context_parts.append(f"Assistant: {content}")
+
+            context_parts.append(f"\nCurrent question: {user_input}")
+            formatted_input = "\n".join(context_parts)
+
         # Create streaming response
-        # Note: Don't use previous_response_id with custom function tools
         stream = await client.responses.create(
             model="gpt-5",
-            input=user_input,
+            input=formatted_input,
             reasoning={"effort": "medium"},
             text={"verbosity": "medium"},
             tools=TOOLS,
-            # previous_response_id=previous_response_id,  # Disabled: breaks with custom tools
             stream=True
         )
 

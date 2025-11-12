@@ -57,7 +57,8 @@ async def websocket_endpoint(websocket: WebSocket):
 
     # Session state
     db = SessionLocal()
-    previous_response_id: Optional[str] = None
+    conversation_history = []  # Store conversation for context injection
+    max_history_messages = 10  # Keep last 10 messages for context
 
     try:
         # Send welcome message
@@ -84,23 +85,37 @@ async def websocket_endpoint(websocket: WebSocket):
                         "timestamp": datetime.utcnow().isoformat()
                     })
 
+                    # Add user message to history
+                    conversation_history.append({"role": "user", "content": content})
+
+                    # Keep only last N messages
+                    if len(conversation_history) > max_history_messages:
+                        conversation_history = conversation_history[-max_history_messages:]
+
                     # Run agent and stream responses
+                    assistant_response = ""
                     async for event in run_agent(
                         user_input=content,
                         db=db,
-                        previous_response_id=previous_response_id
+                        conversation_history=conversation_history[:-1]  # Pass history without current message
                     ):
                         # Add timestamp to all events
                         event["timestamp"] = datetime.utcnow().isoformat()
 
-                        # Update previous_response_id if provided
+                        # Collect assistant response text
+                        if event.get("type") == "text_delta":
+                            assistant_response += event.get("delta", "")
+
+                        # Skip internal events
                         if event.get("type") == "response_complete":
-                            previous_response_id = event.get("response_id")
-                            # Don't send this internal event to frontend
                             continue
 
                         # Send event to frontend
                         await websocket.send_json(event)
+
+                    # Add assistant response to history
+                    if assistant_response:
+                        conversation_history.append({"role": "assistant", "content": assistant_response})
 
             except json.JSONDecodeError:
                 await websocket.send_json({
