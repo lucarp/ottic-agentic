@@ -151,16 +151,21 @@ async def run_agent_streaming(
     """
     Run GPT-5 agent with STREAMING enabled.
     Simple, production-ready implementation.
+
+    Note: previous_response_id is not used with custom function tools
+    because the API expects tool outputs to be submitted, which breaks
+    the streaming flow. Each request is independent.
     """
     try:
         # Create streaming response
+        # Note: Don't use previous_response_id with custom function tools
         stream = await client.responses.create(
             model="gpt-5",
             input=user_input,
             reasoning={"effort": "medium"},
             text={"verbosity": "medium"},
             tools=TOOLS,
-            previous_response_id=previous_response_id,
+            # previous_response_id=previous_response_id,  # Disabled: breaks with custom tools
             stream=True
         )
 
