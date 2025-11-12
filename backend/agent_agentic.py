@@ -342,7 +342,7 @@ async def run_agent_agentic(
                 for output in response.output:
                     if output.type == "function_call":
                         tool_calls.append(output)
-                        logger.info(f"🔧 Tool call: {output.name}")
+                        logger.info(f"🔧 Tool call: {output.name}, call_id={output.call_id}")
 
                 # Notify frontend of tool execution phase
                 if tool_calls:
@@ -356,16 +356,10 @@ async def run_agent_agentic(
                     # Notify frontend
                     yield {"type": "tool_execution", "tool_name": tool_name, "status": "started"}
 
-                    # Handle web_search (native OpenAI tool - no local execution)
-                    if tool_name == "web_search":
-                        logger.info(f"🌐 Web search will be handled by OpenAI")
-                        # Web search is handled by OpenAI - we'll get results in next turn
-                        continue
-
-                    # Execute artifact tools locally
+                    # Execute tools locally (artifact tools + web_search)
                     if tool_name in ['create_csv_artifact', 'create_html_artifact', 'create_chart_artifact',
                                        'create_payment_link_artifact', 'create_markdown_artifact',
-                                       'create_code_artifact', 'fetch_url_content']:
+                                       'create_code_artifact', 'fetch_url_content', 'web_search']:
                         result = await execute_artifact_tool(tool_name, tool_args, db)
 
                         # Notify frontend
@@ -373,8 +367,8 @@ async def run_agent_agentic(
                                "status": "completed" if result.get("success") else "failed",
                                "output": result}
 
-                        # Send artifact if created
-                        if result.get("success"):
+                        # Send artifact if created (web_search doesn't create artifacts)
+                        if result.get("success") and tool_name != "web_search":
                             import uuid
                             artifact = get_artifact_by_id(db, uuid.UUID(result["artifact_id"]))
                             if artifact:
@@ -396,27 +390,34 @@ async def run_agent_agentic(
                             "output": json.dumps(result)
                         })
 
-                # If status was "completed", we're done after executing tools
-                if response.status == "completed":
-                    logger.info("✅ Tools executed, agent was already completed - finishing")
-                    yield {"type": "response_complete", "response_id": response_id}
-                    break
-
-                # Otherwise submit tool outputs and continue
+                # Submit tool outputs and continue (Responses API uses function_call_output in input array)
                 if tool_outputs:
                     logger.info(f"📤 Submitting {len(tool_outputs)} tool outputs back to agent...")
                     yield {"type": "text_delta", "delta": f"📤 Submitting results to agent for turn {turn + 1}...\n"}
-                    response = await client.responses.submit_tool_outputs(
-                        response_id=response_id,
-                        tool_outputs=tool_outputs
+
+                    # Format tool outputs as function_call_output items for Responses API
+                    function_outputs = []
+                    for tool_output in tool_outputs:
+                        function_outputs.append({
+                            "type": "function_call_output",
+                            "call_id": tool_output["call_id"],
+                            "output": tool_output["output"]
+                        })
+
+                    logger.info(f"📋 Submitting function_outputs with call_ids: {[fo['call_id'] for fo in function_outputs]}")
+                    logger.info(f"📋 Using previous_response_id: {response_id}")
+
+                    # Create new response with tool outputs and previous_response_id for context
+                    response = await client.responses.create(
+                        model="gpt-5",
+                        input=function_outputs,
+                        previous_response_id=response_id,  # Maintain conversation context
+                        reasoning={"effort": "low"},
+                        text={"verbosity": "medium"},
+                        tools=TOOLS,
                     )
-                    turn += 1
-                else:
-                    # No local tools executed, just continue
-                    logger.info("⏭️  No local tools to submit, fetching updated response...")
-                    yield {"type": "text_delta", "delta": "⏭️  Fetching updated response...\n"}
-                    response = await client.responses.retrieve(response_id)
-                    await asyncio.sleep(1)  # Wait a bit for OpenAI to process
+                    response_id = response.id
+                    logger.info(f"✅ Response continued: {response_id}")
                     turn += 1
 
             else:
