@@ -183,6 +183,9 @@ async def run_agent_agentic(
         # TURN 1: Create initial response (agent makes plan)
         logger.info("🔄 TURN 1: Creating initial response...")
 
+        # Notify frontend that agent is starting
+        yield {"type": "text_delta", "delta": "🤖 Starting multi-turn agent...\n"}
+
         # Add timeout to initial create call
         try:
             async with asyncio.timeout(120.0):  # 2-minute timeout
@@ -210,6 +213,9 @@ async def run_agent_agentic(
 
         while turn <= max_turns:
             logger.info(f"🔄 TURN {turn}: Processing response status={response.status}")
+
+            # Notify frontend of current turn
+            yield {"type": "text_delta", "delta": f"📍 Turn {turn}: Agent analyzing...\n"}
 
             # Log all outputs for debugging
             logger.info(f"📋 Response has {len(response.output)} outputs")
@@ -247,6 +253,10 @@ async def run_agent_agentic(
                     if output.type == "function_call":
                         tool_calls.append(output)
                         logger.info(f"🔧 Tool call: {output.name}")
+
+                # Notify frontend of tool execution phase
+                if tool_calls:
+                    yield {"type": "text_delta", "delta": f"🔧 Executing {len(tool_calls)} tool(s)...\n"}
 
                 # Execute each tool
                 for tool_call in tool_calls:
@@ -305,6 +315,7 @@ async def run_agent_agentic(
                 # Otherwise submit tool outputs and continue
                 if tool_outputs:
                     logger.info(f"📤 Submitting {len(tool_outputs)} tool outputs back to agent...")
+                    yield {"type": "text_delta", "delta": f"📤 Submitting results to agent for turn {turn + 1}...\n"}
                     response = await client.responses.submit_tool_outputs(
                         response_id=response_id,
                         tool_outputs=tool_outputs
@@ -313,6 +324,7 @@ async def run_agent_agentic(
                 else:
                     # No local tools executed, just continue
                     logger.info("⏭️  No local tools to submit, fetching updated response...")
+                    yield {"type": "text_delta", "delta": "⏭️  Fetching updated response...\n"}
                     response = await client.responses.retrieve(response_id)
                     await asyncio.sleep(1)  # Wait a bit for OpenAI to process
                     turn += 1
