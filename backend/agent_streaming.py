@@ -1,6 +1,7 @@
 """Simple production-ready streaming implementation for GPT-5 agent."""
 
 import json
+import logging
 import os
 import sys
 from datetime import datetime
@@ -26,6 +27,9 @@ from schemas import (
 
 load_dotenv()
 client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 # Tool definitions
 TOOLS = [
@@ -157,9 +161,12 @@ async def run_agent_streaming(
     rather than using previous_response_id (which breaks with custom function tools).
     """
     try:
+        logger.info(f"🚀 Agent invoked with input: '{user_input[:50]}...'")
+
         # Format input with conversation context
         formatted_input = user_input
         if conversation_history and len(conversation_history) > 0:
+            logger.info(f"📚 Using conversation history ({len(conversation_history)} messages)")
             # Build context from conversation history
             context_parts = ["Previous conversation:"]
             for msg in conversation_history:
@@ -172,8 +179,12 @@ async def run_agent_streaming(
 
             context_parts.append(f"\nCurrent question: {user_input}")
             formatted_input = "\n".join(context_parts)
+            logger.info(f"💬 Formatted input length: {len(formatted_input)} chars")
+        else:
+            logger.info("📝 No conversation history (first message)")
 
         # Create streaming response
+        logger.info("🌐 Creating OpenAI streaming response...")
         stream = await client.responses.create(
             model="gpt-5",
             input=formatted_input,
@@ -182,6 +193,7 @@ async def run_agent_streaming(
             tools=TOOLS,
             stream=True
         )
+        logger.info("✅ Stream created successfully")
 
         # Streaming state
         response_id = None
@@ -256,6 +268,7 @@ async def run_agent_streaming(
 
             elif event_type == "response.completed":
                 # Final completion
+                logger.info(f"✅ Response completed (total events: {event_count})")
                 yield {"type": "response_complete", "response_id": response_id}
                 break
 
@@ -267,9 +280,8 @@ async def run_agent_streaming(
                         'name': event.item.name,
                         'call_id': event.item.call_id
                     }
+                    logger.info(f"🔧 Function call added: {event.item.name}")
 
     except Exception as e:
-        print(f"ERROR in streaming agent: {type(e).__name__}: {e}", flush=True)
-        import traceback
-        traceback.print_exc()
+        logger.error(f"❌ ERROR in streaming agent: {type(e).__name__}: {e}", exc_info=True)
         yield {"type": "error", "error": str(e)}
