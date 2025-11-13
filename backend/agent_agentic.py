@@ -1,17 +1,17 @@
-"""Multi-turn agentic implementation using OpenAI Responses API properly."""
+"""Multi-turn agentic implementation using OpenAI Agents SDK."""
 
 import asyncio
 import json
 import logging
 import os
 from datetime import datetime
-from typing import Any, AsyncGenerator, Optional
+from typing import Annotated, Any, AsyncGenerator
 from urllib.parse import urlparse
 
 import httpx
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
-from openai import AsyncOpenAI
+from agents import Agent, Runner, function_tool, WebSearchTool
 from sqlalchemy.orm import Session
 
 from database import create_artifact, ArtifactStatus, get_artifact_by_id
@@ -22,412 +22,465 @@ from schemas import (
     PaymentLinkArtifact,
     MarkdownArtifact,
     CodeArtifact,
-    FetchedLink,
-    WebSearchTool,
 )
 
 load_dotenv()
-client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+logger = logging.getLogger(__name__)
 
-# Initialize Tavily client for web search
-try:
-    from tavily import TavilyClient
-    tavily_client = TavilyClient(api_key=os.getenv("TAVILY_API_KEY"))
-    TAVILY_AVAILABLE = True
-    logger = logging.getLogger(__name__)
-    logger.info("✅ Tavily AI Search initialized")
-except Exception as e:
-    tavily_client = None
-    TAVILY_AVAILABLE = False
-    logger = logging.getLogger(__name__)
-    logger.warning(f"⚠️  Tavily AI Search not available: {e}")
 
-# Tool definitions
-TOOLS_WITHOUT_WEB_SEARCH = [
-    {"type": "function", "name": "create_csv_artifact", "description": "Creates a CSV data artifact with headers and rows.", "parameters": CsvArtifact.model_json_schema()},
-    {"type": "function", "name": "create_html_artifact", "description": "Creates an HTML artifact that will be rendered in the browser.", "parameters": HtmlArtifact.model_json_schema()},
-    {"type": "function", "name": "create_chart_artifact", "description": "Creates a chart/visualization artifact using Chart.js.", "parameters": ChartArtifact.model_json_schema()},
-    {"type": "function", "name": "create_payment_link_artifact", "description": "Creates a Stripe payment link artifact.", "parameters": PaymentLinkArtifact.model_json_schema()},
-    {"type": "function", "name": "create_markdown_artifact", "description": "Creates a markdown document artifact.", "parameters": MarkdownArtifact.model_json_schema()},
-    {"type": "function", "name": "create_code_artifact", "description": "Creates a code snippet artifact with syntax highlighting.", "parameters": CodeArtifact.model_json_schema()},
-    {"type": "function", "name": "fetch_url_content", "description": "Fetches and extracts clean content from a specific URL.", "parameters": FetchedLink.model_json_schema()},
-]
-
-# Tavily AI custom web search tool (executed locally, not by OpenAI)
-TAVILY_WEB_SEARCH_TOOL = {
-    "type": "function",
-    "name": "web_search",
-    "description": "Search the web for current information using Tavily AI. Use this when you need up-to-date information not in your training data.",
-    "parameters": WebSearchTool.model_json_schema()
-}
-
-# Enable Tavily web search if available
-TOOLS = TOOLS_WITHOUT_WEB_SEARCH + ([TAVILY_WEB_SEARCH_TOOL] if TAVILY_AVAILABLE else [])
-
+# ============================================================================
+# URL Fetching Tool
+# ============================================================================
 
 async def fetch_url_content_impl(url: str) -> dict[str, Any]:
-    """Fetch and extract content from URL."""
+    """Fetch and extract clean content from a URL."""
     try:
-        parsed = urlparse(url)
-        if not parsed.scheme or not parsed.netloc:
-            return {"error": "Invalid URL format", "url": url}
+        parsed_url = urlparse(url)
+        if not parsed_url.scheme or not parsed_url.netloc:
+            return {"error": f"Invalid URL: {url}"}
 
-        async with httpx.AsyncClient(follow_redirects=True, timeout=30.0) as http_client:
-            response = await http_client.get(url, headers={"User-Agent": "Mozilla/5.0 (compatible; OtticBot/1.0)"})
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+            response = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
             response.raise_for_status()
 
-        soup = BeautifulSoup(response.content, 'html.parser')
-        title = None
-        if soup.title and soup.title.string:
-            title = soup.title.string.strip()
-        if not title:
-            h1 = soup.find('h1')
-            if h1:
-                title = h1.get_text().strip()
+            content_type = response.headers.get("content-type", "").lower()
 
-        for tag in soup(['script', 'style', 'nav', 'header', 'footer', 'aside']):
-            tag.decompose()
+            if "text/html" in content_type:
+                soup = BeautifulSoup(response.text, "html.parser")
 
-        main_content = None
-        for selector in ['main', 'article', '[role="main"]', '.main-content', '#content']:
-            main_content = soup.select_one(selector)
-            if main_content:
-                break
+                # Remove unwanted elements
+                for tag in soup(["script", "style", "nav", "footer", "aside", "header"]):
+                    tag.decompose()
 
-        if not main_content:
-            main_content = soup.body if soup.body else soup
+                # Extract title
+                title = soup.find("title")
+                title_text = title.get_text().strip() if title else parsed_url.netloc
 
-        text_content = main_content.get_text(separator='\n', strip=True)
-        lines = [line.strip() for line in text_content.split('\n') if line.strip()]
-        clean_content = '\n\n'.join(lines)
+                # Extract main content
+                main_content = soup.find("main") or soup.find("article") or soup.find("body")
+                if main_content:
+                    text_content = main_content.get_text(separator="\n", strip=True)
+                else:
+                    text_content = soup.get_text(separator="\n", strip=True)
 
-        metadata = {}
-        author_meta = soup.find('meta', attrs={'name': 'author'})
-        if author_meta and author_meta.get('content'):
-            metadata['author'] = author_meta['content']
+                # Clean up excessive whitespace
+                lines = [line.strip() for line in text_content.split("\n") if line.strip()]
+                clean_content = "\n".join(lines)
 
-        date_meta = soup.find('meta', attrs={'property': 'article:published_time'}) or soup.find('meta', attrs={'name': 'date'})
-        if date_meta and date_meta.get('content'):
-            metadata['published_date'] = date_meta['content']
-
-        return {
-            "url": url,
-            "title": title or "Untitled",
-            "content": clean_content,
-            "content_type": "text",
-            "fetch_timestamp": datetime.utcnow().isoformat(),
-            "metadata": metadata if metadata else None
-        }
-
-    except Exception as e:
-        return {"error": f"Failed to fetch: {str(e)}", "url": url}
-
-
-async def tavily_search_impl(query: str, max_results: int = 5) -> dict[str, Any]:
-    """Perform web search using Tavily AI."""
-    try:
-        if not TAVILY_AVAILABLE or not tavily_client:
-            return {"error": "Tavily AI Search is not available. Please configure TAVILY_API_KEY."}
-
-        logger.info(f"🔍 Tavily search: '{query}' (max_results={max_results})")
-
-        # Perform search
-        search_result = tavily_client.search(query=query, max_results=max_results)
-
-        # Format results
-        results = []
-        for idx, result in enumerate(search_result.get("results", []), 1):
-            results.append({
-                "position": idx,
-                "title": result.get("title", ""),
-                "url": result.get("url", ""),
-                "content": result.get("content", ""),
-                "score": result.get("score", 0.0),
-            })
-
-        logger.info(f"✅ Found {len(results)} results for: '{query}'")
-
-        return {
-            "query": query,
-            "results": results,
-            "total_results": len(results),
-            "search_timestamp": datetime.utcnow().isoformat()
-        }
+                return {
+                    "success": True,
+                    "url": url,
+                    "title": title_text,
+                    "content": clean_content[:10000],  # Limit content size
+                    "content_type": "text",
+                    "fetch_timestamp": datetime.utcnow().isoformat(),
+                }
+            else:
+                # Non-HTML content
+                return {
+                    "success": True,
+                    "url": url,
+                    "title": parsed_url.netloc,
+                    "content": response.text[:5000],
+                    "content_type": content_type,
+                    "fetch_timestamp": datetime.utcnow().isoformat(),
+                }
 
     except Exception as e:
-        logger.error(f"❌ Tavily search failed: {e}")
-        return {"error": f"Search failed: {str(e)}", "query": query}
+        logger.error(f"❌ URL fetch failed for {url}: {e}")
+        return {"success": False, "error": str(e), "url": url}
 
 
-async def execute_artifact_tool(tool_name: str, tool_input: dict[str, Any], db: Session) -> dict[str, Any]:
-    """Execute artifact tool."""
-    try:
-        # Handle web_search specially - it returns results but doesn't create an artifact
-        if tool_name == "web_search":
-            if isinstance(tool_input, str):
-                tool_input = json.loads(tool_input)
+@function_tool
+async def fetch_url_content(
+    url: Annotated[str, "The URL to fetch content from"]
+) -> str:
+    """Fetch and extract clean text content from a webpage or URL."""
+    result = await fetch_url_content_impl(url)
+    if result.get("success"):
+        return f"Title: {result['title']}\n\nContent:\n{result['content']}"
+    else:
+        return f"Error fetching {url}: {result.get('error', 'Unknown error')}"
 
-            query = tool_input.get("query")
-            max_results = tool_input.get("max_results", 5)
 
-            if not query:
-                return {"success": False, "error": "Query is required for web search"}
+# ============================================================================
+# Artifact Creation Tools Factory
+# ============================================================================
 
-            search_result = await tavily_search_impl(query, max_results)
+def create_artifact_tools(db_session: Session):
+    """Create artifact tools with injected database session."""
 
-            if "error" in search_result:
-                return {"success": False, "error": search_result["error"]}
+    @function_tool
+    def create_csv_artifact(
+        headers: Annotated[list[str], "Column headers for the CSV"],
+        rows: Annotated[list[list], "Data rows as list of lists"],
+        title: Annotated[str | None, "Optional title for the CSV"] = None,
+        description: Annotated[str | None, "Optional description"] = None,
+    ) -> str:
+        """Create a CSV data artifact with headers and rows."""
+        try:
+            artifact_data = CsvArtifact(
+                headers=headers,
+                rows=rows,
+                title=title,
+                description=description
+            ).model_dump()
 
-            return {
+            artifact = create_artifact(
+                db=db_session,
+                artifact_type="csv",
+                data=artifact_data,
+                status=ArtifactStatus.FINAL
+            )
+
+            return json.dumps({
                 "success": True,
-                "search_results": search_result,
-                "message": f"Found {search_result['total_results']} results for: {query}"
-            }
+                "artifact_id": str(artifact.id),
+                "type": "csv",
+                "message": "Successfully created CSV artifact"
+            })
+        except Exception as e:
+            logger.error(f"Error creating CSV artifact: {e}")
+            return json.dumps({"success": False, "error": str(e)})
 
-        artifact_mapping = {
-            "create_csv_artifact": ("csv", CsvArtifact),
-            "create_html_artifact": ("html", HtmlArtifact),
-            "create_chart_artifact": ("chart", ChartArtifact),
-            "create_payment_link_artifact": ("payment_link", PaymentLinkArtifact),
-            "create_markdown_artifact": ("markdown", MarkdownArtifact),
-            "create_code_artifact": ("code", CodeArtifact),
-            "fetch_url_content": ("fetched_link", FetchedLink),
-        }
 
-        if tool_name not in artifact_mapping:
-            return {"success": False, "error": f"Unknown tool: {tool_name}"}
+    @function_tool
+    def create_chart_artifact(
+        chart_type: Annotated[str, "Type of chart: 'bar', 'line', 'pie', 'doughnut', 'scatter'"],
+        labels: Annotated[list[str], "Labels for the chart data points"],
+        datasets: Annotated[list[dict], "Chart.js datasets with label, data, and styling"],
+        title: Annotated[str | None, "Chart title"] = None,
+        x_axis_label: Annotated[str | None, "X-axis label"] = None,
+        y_axis_label: Annotated[str | None, "Y-axis label"] = None,
+    ) -> str:
+        """Create a chart/visualization artifact using Chart.js format."""
+        try:
+            artifact_data = ChartArtifact(
+                chart_type=chart_type,
+                labels=labels,
+                datasets=datasets,
+                title=title,
+                x_axis_label=x_axis_label,
+                y_axis_label=y_axis_label
+            ).model_dump()
 
-        artifact_type, schema_class = artifact_mapping[tool_name]
+            artifact = create_artifact(
+                db=db_session,
+                artifact_type="chart",
+                data=artifact_data,
+                status=ArtifactStatus.FINAL
+            )
 
-        if isinstance(tool_input, str):
-            tool_input = json.loads(tool_input)
+            return json.dumps({
+                "success": True,
+                "artifact_id": str(artifact.id),
+                "type": "chart",
+                "message": "Successfully created chart artifact"
+            })
+        except Exception as e:
+            logger.error(f"Error creating chart artifact: {e}")
+            return json.dumps({"success": False, "error": str(e)})
 
-        # Special handling for URL fetching
-        if tool_name == "fetch_url_content":
-            url = tool_input.get("url")
-            if not url:
-                return {"success": False, "error": "URL is required"}
-            fetched_data = await fetch_url_content_impl(url)
-            if "error" in fetched_data:
-                return {"success": False, "error": fetched_data["error"]}
-            tool_input = fetched_data
+    @function_tool
+    def create_markdown_artifact(
+        content: Annotated[str, "Markdown formatted content"],
+        title: Annotated[str | None, "Document title"] = None,
+    ) -> str:
+        """Create a markdown document artifact."""
+        try:
+            artifact_data = MarkdownArtifact(
+                content=content,
+                title=title
+            ).model_dump()
 
-        validated_data = schema_class(**tool_input)
-        artifact = create_artifact(db=db, artifact_type=artifact_type, data=validated_data.model_dump(), status=ArtifactStatus.FINAL, artifact_metadata={"tool": tool_name})
+            artifact = create_artifact(
+                db=db_session,
+                artifact_type="markdown",
+                data=artifact_data,
+                status=ArtifactStatus.FINAL
+            )
 
-        return {
-            "success": True,
-            "artifact_id": str(artifact.id),
-            "type": artifact.type,
-            "message": f"Successfully created {artifact_type} artifact"
-        }
+            return json.dumps({
+                "success": True,
+                "artifact_id": str(artifact.id),
+                "type": "markdown",
+                "message": "Successfully created markdown artifact"
+            })
+        except Exception as e:
+            logger.error(f"Error creating markdown artifact: {e}")
+            return json.dumps({"success": False, "error": str(e)})
 
-    except Exception as e:
-        return {"success": False, "error": f"Failed: {str(e)}"}
+    @function_tool
+    def create_code_artifact(
+        code: Annotated[str, "The code content"],
+        language: Annotated[str, "Programming language (e.g., 'python', 'javascript', 'sql')"],
+        title: Annotated[str | None, "Code snippet title"] = None,
+        description: Annotated[str | None, "Description of what the code does"] = None,
+    ) -> str:
+        """Create a code snippet artifact with syntax highlighting."""
+        try:
+            artifact_data = CodeArtifact(
+                code=code,
+                language=language,
+                title=title,
+                description=description
+            ).model_dump()
 
+            artifact = create_artifact(
+                db=db_session,
+                artifact_type="code",
+                data=artifact_data,
+                status=ArtifactStatus.FINAL
+            )
+
+            return json.dumps({
+                "success": True,
+                "artifact_id": str(artifact.id),
+                "type": "code",
+                "message": "Successfully created code artifact"
+            })
+        except Exception as e:
+            logger.error(f"Error creating code artifact: {e}")
+            return json.dumps({"success": False, "error": str(e)})
+
+    @function_tool
+    def create_html_artifact(
+        html: Annotated[str, "The HTML content to render"],
+        title: Annotated[str | None, "Optional title"] = None,
+        css: Annotated[str | None, "Optional custom CSS styles"] = None,
+    ) -> str:
+        """Create an HTML content artifact."""
+        try:
+            artifact_data = HtmlArtifact(
+                html=html,
+                title=title,
+                css=css
+            ).model_dump()
+
+            artifact = create_artifact(
+                db=db_session,
+                artifact_type="html",
+                data=artifact_data,
+                status=ArtifactStatus.FINAL
+            )
+
+            return json.dumps({
+                "success": True,
+                "artifact_id": str(artifact.id),
+                "type": "html",
+                "message": "Successfully created HTML artifact"
+            })
+        except Exception as e:
+            logger.error(f"Error creating HTML artifact: {e}")
+            return json.dumps({"success": False, "error": str(e)})
+
+    @function_tool
+    def create_payment_link_artifact(
+        amount: Annotated[float, "Payment amount in USD (must be greater than 0)"],
+        description: Annotated[str, "Payment description"],
+        currency: Annotated[str, "Currency code (e.g., 'usd', 'eur')"] = "usd",
+        success_message: Annotated[str | None, "Message shown on success"] = None,
+        metadata: Annotated[dict[str, str] | None, "Additional metadata"] = None,
+    ) -> str:
+        """Create a Stripe payment link artifact."""
+        try:
+            artifact_data = PaymentLinkArtifact(
+                amount=amount,
+                currency=currency,
+                description=description,
+                success_message=success_message,
+                metadata=metadata
+            ).model_dump()
+
+            artifact = create_artifact(
+                db=db_session,
+                artifact_type="payment_link",
+                data=artifact_data,
+                status=ArtifactStatus.FINAL
+            )
+
+            return json.dumps({
+                "success": True,
+                "artifact_id": str(artifact.id),
+                "type": "payment_link",
+                "message": "Successfully created payment link artifact"
+            })
+        except Exception as e:
+            logger.error(f"Error creating payment link artifact: {e}")
+            return json.dumps({"success": False, "error": str(e)})
+
+    # Return all tools
+    return [
+        create_csv_artifact,
+        create_chart_artifact,
+        create_markdown_artifact,
+        create_code_artifact,
+        create_html_artifact,
+        create_payment_link_artifact,
+    ]
+
+
+# ============================================================================
+# Agent Setup with Tools
+# ============================================================================
+
+def create_agent_with_tools(db_session: Session) -> Agent:
+    """Create an Agent with all artifact creation tools and web capabilities."""
+
+    # Create artifact tools with injected database session
+    artifact_tools = create_artifact_tools(db_session)
+
+    # Create tool list
+    tools = [
+        WebSearchTool(),  # Built-in web search
+        fetch_url_content,  # Custom URL fetching
+    ] + artifact_tools  # All artifact creation tools
+
+    agent = Agent(
+        name="Artifact Assistant",
+        instructions="""You are an AI assistant specialized in creating structured artifacts.
+
+You have access to:
+- Web search to find current information
+- URL fetching to read content from webpages
+- CSV creation for tabular data
+- Chart creation for data visualizations
+- Markdown documents for reports
+- Code snippets with syntax highlighting
+- HTML content for rich displays
+- Payment links for transactions
+
+When users request information or data:
+1. Use web search if you need current information
+2. Fetch URLs if you need to read specific webpages
+3. Create appropriate artifacts to present the information clearly
+4. Always create artifacts in the user's requested language
+5. Provide clear, well-structured outputs
+
+Be helpful, accurate, and create high-quality artifacts.""",
+        tools=tools,
+    )
+
+    return agent
+
+
+# ============================================================================
+# Streaming Runner
+# ============================================================================
 
 async def run_agent_agentic(
     user_input: str,
     db: Session,
-    conversation_history: list[dict[str, str]] = None
+    conversation_history: list[dict[str, str]] | None = None
 ) -> AsyncGenerator[dict[str, Any], None]:
     """
-    Run GPT-5 agent with PROPER MULTI-TURN AGENTIC PATTERN.
+    Run the agent with streaming support for the frontend.
 
-    This implements the correct Responses API pattern:
-    1. Create response (agent plans)
-    2. Execute tool calls locally
-    3. Submit tool outputs back to agent
-    4. Agent continues with results
-    5. Repeat until complete
+    Yields events compatible with the existing WebSocket frontend.
     """
+    logger.info(f"🤖 Starting Agent run for: '{user_input[:50]}...'")
+
     try:
-        logger.info(f"🤖 AGENTIC MODE: Starting multi-turn agent for: '{user_input[:50]}...'")
+        # Create agent with database session
+        agent = create_agent_with_tools(db)
 
-        # Format input with conversation context
-        formatted_input = user_input
-        if conversation_history and len(conversation_history) > 0:
-            logger.info(f"📚 Using conversation history ({len(conversation_history)} messages)")
-            context_parts = ["Previous conversation:"]
-            for msg in conversation_history:
-                role = msg.get("role", "user")
-                content = msg.get("content", "")
-                if role == "user":
-                    context_parts.append(f"User: {content}")
-                elif role == "assistant":
-                    context_parts.append(f"Assistant: {content}")
+        # Build input with conversation history if provided
+        full_input = user_input
+        if conversation_history:
+            # Format conversation history
+            history_text = "\n".join([
+                f"{'User' if msg['role'] == 'user' else 'Assistant'}: {msg['content']}"
+                for msg in conversation_history[-5:]  # Last 5 messages for context
+            ])
+            full_input = f"Previous conversation:\n{history_text}\n\nCurrent request: {user_input}"
 
-            context_parts.append(f"\nCurrent question: {user_input}")
-            formatted_input = "\n".join(context_parts)
+        # Run agent with streaming
+        result = Runner.run_streamed(agent, full_input)
 
-        # TURN 1: Create initial response (agent makes plan)
-        logger.info("🔄 TURN 1: Creating initial response...")
+        current_text_delta = ""
+        function_calls_active = {}
 
-        # Notify frontend that agent is starting
-        yield {"type": "text_delta", "delta": "🤖 Starting multi-turn agent...\n"}
+        async for event in result.stream_events():
+            event_type = event.type
 
-        # Add timeout to initial create call
-        # Log exactly where we are
-        import time
-        start_time = time.time()
-        logger.info("📍 About to call client.responses.create() - this is where timeout occurs")
+            # Handle text deltas (assistant messages)
+            if event_type == "raw_response_event":
+                if event.data.type == "response.text.delta":
+                    delta = getattr(event.data, "delta", "")
+                    current_text_delta += delta
+                    yield {
+                        "type": "text_delta",
+                        "delta": delta
+                    }
 
-        try:
-            async with asyncio.timeout(120.0):  # 2-minute timeout
-                logger.info("📍 Inside timeout block, calling OpenAI API...")
-                response = await client.responses.create(
-                    model="gpt-5",
-                    input=formatted_input,
-                    reasoning={"effort": "low"},  # Changed from "medium" to "low" for faster responses
-                    text={"verbosity": "medium"},
-                    tools=TOOLS,
-                )
-                elapsed = time.time() - start_time
-                logger.info(f"✅ OpenAI API call completed in {elapsed:.1f}s")
-        except asyncio.TimeoutError:
-            elapsed = time.time() - start_time
-            logger.error(f"⏱️  TIMEOUT: client.responses.create() exceeded 120s (actual: {elapsed:.1f}s)")
-            logger.error("📍 Timeout location: agent_agentic.py:192 - initial response creation with OpenAI API")
-            yield {
-                "type": "error",
-                "error": f"Request timeout: The OpenAI API call took longer than 120s ({elapsed:.1f}s actual). This happens when the model needs extensive web search. Try a simpler request or try again."
-            }
-            return
+                elif event.data.type == "response.text.done":
+                    if current_text_delta:
+                        yield {
+                            "type": "assistant_message",
+                            "content": current_text_delta
+                        }
+                        current_text_delta = ""
 
-        response_id = response.id
-        logger.info(f"✅ Response created: {response_id}")
+                # Function call started
+                elif event.data.type == "response.output_item.added":
+                    if getattr(event.data.item, "type", None) == "function_call":
+                        function_name = getattr(event.data.item, "name", "unknown")
+                        call_id = getattr(event.data.item, "call_id", "unknown")
+                        function_calls_active[call_id] = function_name
 
-        # Multi-turn loop
-        max_turns = 10
-        turn = 1
+                        yield {
+                            "type": "tool_execution",
+                            "tool_name": function_name,
+                            "status": "started"
+                        }
 
-        while turn <= max_turns:
-            logger.info(f"🔄 TURN {turn}: Processing response status={response.status}")
+                # Function call completed
+                elif event.data.type == "response.output_item.done":
+                    if hasattr(event.data.item, "call_id"):
+                        call_id = getattr(event.data.item, "call_id", None)
+                        if call_id in function_calls_active:
+                            function_name = function_calls_active[call_id]
 
-            # Notify frontend of current turn
-            yield {"type": "text_delta", "delta": f"📍 Turn {turn}: Agent analyzing...\n"}
+                            # Get function output
+                            output_str = getattr(event.data.item, "output", "{}")
+                            try:
+                                output_data = json.loads(output_str) if isinstance(output_str, str) else output_str
+                            except:
+                                output_data = {"output": str(output_str)}
 
-            # Log all outputs for debugging
-            logger.info(f"📋 Response has {len(response.output)} outputs")
-            for idx, output in enumerate(response.output):
-                logger.info(f"  Output {idx}: type={output.type}")
+                            yield {
+                                "type": "tool_execution",
+                                "tool_name": function_name,
+                                "status": "completed",
+                                "output": output_data
+                            }
 
-            # Check if there are function calls to execute (even if status is completed)
-            has_function_calls = any(output.type == "function_call" for output in response.output)
-
-            if response.status == "completed" and not has_function_calls:
-                logger.info(f"✅ Agent completed after {turn} turns (no function calls)")
-
-                # Send final text output if any
-                for output in response.output:
-                    if output.type == "text":
-                        yield {"type": "text_delta", "delta": output.content, "response_id": response_id}
-
-                yield {"type": "response_complete", "response_id": response_id}
-                break
-
-            # If completed but has function calls, execute them
-            if response.status == "completed" and has_function_calls:
-                logger.info(f"✅ Agent completed with function calls - executing tools...")
-                # Fall through to tool execution below
-
-            # If requires action OR completed with function calls, execute tools
-            if response.status == "requires_action" or (response.status == "completed" and has_function_calls):
-                logger.info(f"🔧 Agent requires action - executing tools...")
-
-                tool_calls = []
-                tool_outputs = []
-
-                # Collect all tool calls
-                for output in response.output:
-                    if output.type == "function_call":
-                        tool_calls.append(output)
-                        logger.info(f"🔧 Tool call: {output.name}, call_id={output.call_id}")
-
-                # Notify frontend of tool execution phase
-                if tool_calls:
-                    yield {"type": "text_delta", "delta": f"🔧 Executing {len(tool_calls)} tool(s)...\n"}
-
-                # Execute each tool
-                for tool_call in tool_calls:
-                    tool_name = tool_call.name
-                    tool_args = json.loads(tool_call.arguments) if isinstance(tool_call.arguments, str) else tool_call.arguments
-
-                    # Notify frontend
-                    yield {"type": "tool_execution", "tool_name": tool_name, "status": "started"}
-
-                    # Execute tools locally (artifact tools + web_search)
-                    if tool_name in ['create_csv_artifact', 'create_html_artifact', 'create_chart_artifact',
-                                       'create_payment_link_artifact', 'create_markdown_artifact',
-                                       'create_code_artifact', 'fetch_url_content', 'web_search']:
-                        result = await execute_artifact_tool(tool_name, tool_args, db)
-
-                        # Notify frontend
-                        yield {"type": "tool_execution", "tool_name": tool_name,
-                               "status": "completed" if result.get("success") else "failed",
-                               "output": result}
-
-                        # Send artifact if created (web_search doesn't create artifacts)
-                        if result.get("success") and tool_name != "web_search":
-                            import uuid
-                            artifact = get_artifact_by_id(db, uuid.UUID(result["artifact_id"]))
-                            if artifact:
-                                yield {
-                                    "type": "artifact_created",
-                                    "artifact": {
-                                        "id": str(artifact.id),
-                                        "type": artifact.type,
-                                        "status": artifact.status.value,
-                                        "data": artifact.data,
-                                        "artifact_metadata": artifact.artifact_metadata,
-                                        "created_at": artifact.created_at.isoformat()
+                            # If artifact was created, emit artifact_created event
+                            if output_data.get("success") and output_data.get("artifact_id"):
+                                artifact = get_artifact_by_id(db, output_data["artifact_id"])
+                                if artifact:
+                                    yield {
+                                        "type": "artifact_created",
+                                        "artifact": {
+                                            "id": str(artifact.id),
+                                            "type": artifact.type,
+                                            "status": artifact.status.value,
+                                            "data": artifact.data,
+                                            "artifact_metadata": artifact.artifact_metadata,
+                                            "created_at": artifact.created_at.isoformat()
+                                        }
                                     }
-                                }
 
-                        # Prepare tool output for submission
-                        tool_outputs.append({
-                            "call_id": tool_call.call_id,
-                            "output": json.dumps(result)
-                        })
+                            del function_calls_active[call_id]
 
-                # Submit tool outputs and continue (Responses API uses function_call_output in input array)
-                if tool_outputs:
-                    logger.info(f"📤 Submitting {len(tool_outputs)} tool outputs back to agent...")
-                    yield {"type": "text_delta", "delta": f"📤 Submitting results to agent for turn {turn + 1}...\n"}
+        # Signal completion
+        yield {"type": "response_complete"}
 
-                    # Format tool outputs as function_call_output items for Responses API
-                    function_outputs = []
-                    for tool_output in tool_outputs:
-                        function_outputs.append({
-                            "type": "function_call_output",
-                            "call_id": tool_output["call_id"],
-                            "output": tool_output["output"]
-                        })
-
-                    logger.info(f"📋 Submitting function_outputs with call_ids: {[fo['call_id'] for fo in function_outputs]}")
-                    logger.info(f"📋 Using previous_response_id: {response_id}")
-
-                    # Create new response with tool outputs and previous_response_id for context
-                    response = await client.responses.create(
-                        model="gpt-5",
-                        input=function_outputs,
-                        previous_response_id=response_id,  # Maintain conversation context
-                        reasoning={"effort": "low"},
-                        text={"verbosity": "medium"},
-                        tools=TOOLS,
-                    )
-                    response_id = response.id
-                    logger.info(f"✅ Response continued: {response_id}")
-                    turn += 1
-
-            else:
-                logger.warning(f"⚠️  Unexpected response status: {response.status}")
-                break
-
-        if turn > max_turns:
-            logger.error(f"⏱️  Max turns ({max_turns}) exceeded")
-            yield {"type": "error", "error": f"Agent exceeded maximum turns ({max_turns})"}
+        logger.info("✅ Agent run completed successfully")
 
     except Exception as e:
-        logger.error(f"❌ ERROR in agentic agent: {type(e).__name__}: {e}", exc_info=True)
-        yield {"type": "error", "error": str(e)}
+        logger.error(f"❌ Agent run failed: {type(e).__name__}: {e}", exc_info=True)
+        yield {
+            "type": "error",
+            "error": f"Agent error: {str(e)}"
+        }
