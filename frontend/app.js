@@ -9,7 +9,8 @@ const state = {
     activeArtifactId: null,
     isConnected: false,
     charts: {},  // Store Chart.js instances
-    currentMessageDiv: null  // Track current streaming message
+    currentMessageDiv: null,  // Track current streaming message
+    currentReasoningDiv: null  // Track current streaming reasoning
 };
 
 // DOM elements
@@ -268,9 +269,14 @@ function handleMessage(message) {
             addUserMessage(message.content);
             // Reset streaming state for new conversation turn
             state.currentMessageDiv = null;
+            state.currentReasoningDiv = null;
             break;
         case 'reasoning':
             addReasoningMessage(message.content);
+            break;
+        case 'reasoning_delta':
+            // STREAMING: Accumulate reasoning deltas
+            handleReasoningDelta(message.delta);
             break;
         case 'text_delta':
             // STREAMING: Accumulate text deltas
@@ -362,6 +368,24 @@ function handleTextDelta(delta) {
 function handleTextDone() {
     // Finalize current streaming message
     state.currentMessageDiv = null;
+}
+
+function handleReasoningDelta(delta) {
+    // Create reasoning div if it doesn't exist
+    if (!state.currentReasoningDiv) {
+        state.currentReasoningDiv = document.createElement('div');
+        state.currentReasoningDiv.className = 'message reasoning-message';
+        state.currentReasoningDiv.style.color = '#ffd700';  // Gold color for reasoning
+        state.currentReasoningDiv.style.fontStyle = 'italic';
+        state.currentReasoningDiv.style.borderLeft = '3px solid #ffd700';
+        state.currentReasoningDiv.style.paddingLeft = '10px';
+        state.currentReasoningDiv.style.marginLeft = '5px';
+        terminalMessages.appendChild(state.currentReasoningDiv);
+    }
+
+    // Append delta to current reasoning message
+    state.currentReasoningDiv.textContent += delta;
+    scrollToBottom();
 }
 
 function scrollToBottom() {

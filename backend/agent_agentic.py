@@ -11,7 +11,8 @@ from urllib.parse import urlparse
 import httpx
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
-from agents import Agent, Runner, function_tool, WebSearchTool
+from agents import Agent, Runner, function_tool, WebSearchTool, ModelSettings
+from openai.types.shared.reasoning import Reasoning
 from sqlalchemy.orm import Session
 
 from database import create_artifact, ArtifactStatus, get_artifact_by_id
@@ -382,6 +383,11 @@ When users request information or data:
 
 Be helpful, accurate, and create high-quality artifacts.""",
         tools=tools,
+        model="gpt-5",
+        model_settings=ModelSettings(
+            reasoning=Reasoning(effort="medium", summary="detailed"),
+            verbosity="low",
+        ),
     )
 
     return agent
@@ -427,10 +433,21 @@ async def run_agent_agentic(
             event_type = event.type
 
             # Debug logging (can be disabled in production)
-            # logger.info(f"🔍 Event type: {event_type}, item type: {getattr(event, 'item', {}).type if hasattr(event, 'item') else 'N/A'}")
+            if event_type == "raw_response_event" and hasattr(event, 'data') and hasattr(event.data, 'type'):
+                logger.info(f"🔍 Raw event data type: {event.data.type}")
 
-            # Skip raw response events (use run_item_stream_event instead)
+            # Handle raw response events for reasoning and text deltas
             if event_type == "raw_response_event":
+                # Check if this is a reasoning or text delta
+                if hasattr(event, 'data') and hasattr(event.data, 'type'):
+                    if event.data.type == "response.reasoning_summary_text.delta":
+                        # Stream reasoning tokens to frontend
+                        yield {
+                            "type": "reasoning_delta",
+                            "delta": event.data.delta
+                        }
+                        continue
+                    # Skip other raw response events
                 continue
 
             # Handle run item stream events (this is the correct way per openai-agents docs)
