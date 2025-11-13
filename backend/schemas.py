@@ -32,9 +32,16 @@ class ArtifactResponse(BaseModel):
 # ============================================================================
 
 class CsvArtifact(BaseModel):
-    """CSV data artifact with headers and rows."""
+    """CSV data artifact with headers and rows.
+
+    IMPORTANT: For openai-agents strict JSON schema compatibility:
+    - Use concrete types only (str, int, float, bool, list[str], etc.)
+    - NEVER use Any, Dict[str, Any], or list[Any] - these cause additionalProperties errors
+    - All nested lists must have concrete types: list[list[str]] not list[list[Any]]
+    - For mixed-type data, convert to strings at the tool level
+    """
     headers: list[str] = Field(description="Column headers for the CSV")
-    rows: list[list[Any]] = Field(description="Data rows as list of lists")
+    rows: list[list[str]] = Field(description="Data rows as list of lists (all values as strings)")
     title: Optional[str] = Field(default=None, description="Optional title for the CSV")
     description: Optional[str] = Field(default=None, description="Optional description")
 
@@ -46,11 +53,28 @@ class HtmlArtifact(BaseModel):
     css: Optional[str] = Field(default=None, description="Optional custom CSS styles")
 
 
+class ChartDataset(BaseModel):
+    """Chart.js dataset structure.
+
+    IMPORTANT: For strict JSON schema compatibility:
+    - Avoid union types like Optional[str | list[str]] - use single types only
+    - Do NOT use Config class with extra="allow" - causes additionalProperties errors
+    - Define all expected fields explicitly rather than allowing arbitrary properties
+    """
+    label: str = Field(description="Dataset label")
+    data: list[float] = Field(description="Data values")
+    backgroundColor: Optional[str] = Field(default=None, description="Background color")
+    borderColor: Optional[str] = Field(default=None, description="Border color")
+    borderWidth: Optional[int] = Field(default=None, description="Border width")
+    fill: Optional[bool] = Field(default=None, description="Fill under line (for line charts)")
+    tension: Optional[float] = Field(default=None, description="Line tension/curve (for line charts)")
+
+
 class ChartArtifact(BaseModel):
     """Chart/visualization artifact using Chart.js format."""
     chart_type: str = Field(description="Type of chart: 'bar', 'line', 'pie', 'doughnut', 'scatter', etc.")
     labels: list[str] = Field(description="Labels for the chart data points")
-    datasets: list[dict[str, Any]] = Field(description="Chart.js datasets with label, data, and styling")
+    datasets: list[ChartDataset] = Field(description="Chart.js datasets with label, data, and styling")
     title: Optional[str] = Field(default=None, description="Chart title")
     x_axis_label: Optional[str] = Field(default=None, description="X-axis label")
     y_axis_label: Optional[str] = Field(default=None, description="Y-axis label")

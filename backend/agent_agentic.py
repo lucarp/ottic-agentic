@@ -19,6 +19,7 @@ from schemas import (
     CsvArtifact,
     HtmlArtifact,
     ChartArtifact,
+    ChartDataset,
     PaymentLinkArtifact,
     MarkdownArtifact,
     CodeArtifact,
@@ -108,12 +109,35 @@ async def fetch_url_content(
 # ============================================================================
 
 def create_artifact_tools(db_session: Session):
-    """Create artifact tools with injected database session."""
+    """Create artifact tools with injected database session.
+
+    CRITICAL FIX NOTES (to prevent future errors):
+    ==================================================
+    The openai-agents SDK (v0.5.0+) enforces STRICT JSON SCHEMA mode for function_tool.
+    This means:
+
+    1. NEVER use @function_tool(strict=False) - this parameter doesn't exist!
+    2. NEVER use Dict[str, Any] or list[Any] types - causes "additionalProperties" errors
+    3. ALWAYS use concrete types: list[str], list[float], list[list[str]], etc.
+    4. NEVER use Config class with extra="allow" in Pydantic models
+    5. AVOID complex union types like Optional[str | list[str]] - use single types
+    6. ALL Pydantic fields must generate strict JSON schemas with additionalProperties=false
+
+    If you get "additionalProperties should not be set for object types" error:
+    - Check for Any, Dict, or generic types in function signatures
+    - Check for union types (|) that aren't just Optional
+    - Check for Pydantic Config with extra="allow"
+    - Replace with concrete, specific types
+
+    References:
+    - OpenAI Structured Outputs: https://platform.openai.com/docs/guides/structured-outputs
+    - Forum discussion: https://community.openai.com/t/agent-sdk-throws-error-additionalproperties-should-not-be-set-for-object-types
+    """
 
     @function_tool
     def create_csv_artifact(
         headers: Annotated[list[str], "Column headers for the CSV"],
-        rows: Annotated[list[list], "Data rows as list of lists"],
+        rows: Annotated[list[list[str]], "Data rows as list of lists (all values as strings)"],
         title: Annotated[str | None, "Optional title for the CSV"] = None,
         description: Annotated[str | None, "Optional description"] = None,
     ) -> str:
@@ -148,7 +172,7 @@ def create_artifact_tools(db_session: Session):
     def create_chart_artifact(
         chart_type: Annotated[str, "Type of chart: 'bar', 'line', 'pie', 'doughnut', 'scatter'"],
         labels: Annotated[list[str], "Labels for the chart data points"],
-        datasets: Annotated[list[dict], "Chart.js datasets with label, data, and styling"],
+        datasets: Annotated[list[ChartDataset], "Chart.js datasets with label, data, and styling"],
         title: Annotated[str | None, "Chart title"] = None,
         x_axis_label: Annotated[str | None, "X-axis label"] = None,
         y_axis_label: Annotated[str | None, "Y-axis label"] = None,
@@ -280,7 +304,6 @@ def create_artifact_tools(db_session: Session):
         description: Annotated[str, "Payment description"],
         currency: Annotated[str, "Currency code (e.g., 'usd', 'eur')"] = "usd",
         success_message: Annotated[str | None, "Message shown on success"] = None,
-        metadata: Annotated[dict[str, str] | None, "Additional metadata"] = None,
     ) -> str:
         """Create a Stripe payment link artifact."""
         try:
@@ -289,7 +312,7 @@ def create_artifact_tools(db_session: Session):
                 currency=currency,
                 description=description,
                 success_message=success_message,
-                metadata=metadata
+                metadata=None
             ).model_dump()
 
             artifact = create_artifact(
@@ -403,75 +426,86 @@ async def run_agent_agentic(
         async for event in result.stream_events():
             event_type = event.type
 
-            # Handle text deltas (assistant messages)
+            # Log ALL event types for debugging
+            logger.info(f"🔍 Event type: {event_type}, item type: {getattr(event, 'item', {}).type if hasattr(event, 'item') else 'N/A'}")
+
+            # Skip raw response events (use run_item_stream_event instead)
             if event_type == "raw_response_event":
-                if event.data.type == "response.text.delta":
-                    delta = getattr(event.data, "delta", "")
-                    current_text_delta += delta
+                continue
+
+            # Handle run item stream events (this is the correct way to handle tool calls and outputs)
+            elif event_type == "run_item_stream_event":
+                item = event.item
+
+                if item.type == "tool_call_item":
+                    # Tool call started
+                    raw_item = getattr(item, "raw_item", None)
+                    logger.info(f"🔍 DEBUG raw_item: {raw_item}")
+                    if raw_item:
+                        logger.info(f"🔍 DEBUG raw_item attributes: {dir(raw_item)}")
+                        logger.info(f"🔍 DEBUG raw_item.name: {getattr(raw_item, 'name', 'NO_NAME')}")
+
+                    function_name = getattr(raw_item, "name", "unknown") if raw_item else "unknown"
+                    call_id = getattr(raw_item, "call_id", "unknown") if raw_item else "unknown"
+                    function_calls_active[call_id] = function_name
+
                     yield {
-                        "type": "text_delta",
-                        "delta": delta
+                        "type": "tool_execution",
+                        "tool_name": function_name,
+                        "status": "started"
                     }
 
-                elif event.data.type == "response.text.done":
-                    if current_text_delta:
-                        yield {
-                            "type": "assistant_message",
-                            "content": current_text_delta
-                        }
-                        current_text_delta = ""
+                elif item.type == "tool_call_output_item":
+                    # Tool call output received
+                    raw_item = getattr(item, "raw_item", None)
+                    call_id = getattr(raw_item, "call_id", None) if raw_item else None
+                    if call_id and call_id in function_calls_active:
+                        function_name = function_calls_active[call_id]
+                        output_str = getattr(raw_item, "output", "{}") if raw_item else "{}"
 
-                # Function call started
-                elif event.data.type == "response.output_item.added":
-                    if getattr(event.data.item, "type", None) == "function_call":
-                        function_name = getattr(event.data.item, "name", "unknown")
-                        call_id = getattr(event.data.item, "call_id", "unknown")
-                        function_calls_active[call_id] = function_name
+                        try:
+                            output_data = json.loads(output_str) if isinstance(output_str, str) else output_str
+                        except Exception as parse_err:
+                            logger.error(f"❌ Failed to parse output: {parse_err}")
+                            output_data = {"output": str(output_str)}
+
+                        logger.info(f"🔍 Tool output for {function_name}: {output_data}")
 
                         yield {
                             "type": "tool_execution",
                             "tool_name": function_name,
-                            "status": "started"
+                            "status": "completed",
+                            "output": output_data
                         }
 
-                # Function call completed
-                elif event.data.type == "response.output_item.done":
-                    if hasattr(event.data.item, "call_id"):
-                        call_id = getattr(event.data.item, "call_id", None)
-                        if call_id in function_calls_active:
-                            function_name = function_calls_active[call_id]
-
-                            # Get function output
-                            output_str = getattr(event.data.item, "output", "{}")
-                            try:
-                                output_data = json.loads(output_str) if isinstance(output_str, str) else output_str
-                            except:
-                                output_data = {"output": str(output_str)}
-
-                            yield {
-                                "type": "tool_execution",
-                                "tool_name": function_name,
-                                "status": "completed",
-                                "output": output_data
-                            }
-
-                            # If artifact was created, emit artifact_created event
-                            if output_data.get("success") and output_data.get("artifact_id"):
-                                artifact = get_artifact_by_id(db, output_data["artifact_id"])
-                                if artifact:
-                                    yield {
-                                        "type": "artifact_created",
-                                        "artifact": {
-                                            "id": str(artifact.id),
-                                            "type": artifact.type,
-                                            "status": artifact.status.value,
-                                            "data": artifact.data,
-                                            "artifact_metadata": artifact.artifact_metadata,
-                                            "created_at": artifact.created_at.isoformat()
-                                        }
+                        # If artifact was created, emit artifact_created event
+                        if output_data.get("success") and output_data.get("artifact_id"):
+                            logger.info(f"📦 Emitting artifact_created event for artifact_id: {output_data.get('artifact_id')}")
+                            artifact = get_artifact_by_id(db, output_data["artifact_id"])
+                            if artifact:
+                                yield {
+                                    "type": "artifact_created",
+                                    "artifact": {
+                                        "id": str(artifact.id),
+                                        "type": artifact.type,
+                                        "status": artifact.status.value,
+                                        "data": artifact.data,
+                                        "artifact_metadata": artifact.artifact_metadata,
+                                        "created_at": artifact.created_at.isoformat()
                                     }
+                                }
 
-                            del function_calls_active[call_id]
+                        del function_calls_active[call_id]
+
+                elif item.type == "message_output_item":
+                    # Assistant message output
+                    from agents import ItemHelpers
+                    text_content = ItemHelpers.text_message_output(item)
+                    if text_content:
+                        yield {
+                            "type": "assistant_message",
+                            "content": text_content
+                        }
 
         # Signal completion
         yield {"type": "response_complete"}
