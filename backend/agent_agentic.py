@@ -426,42 +426,50 @@ async def run_agent_agentic(
         async for event in result.stream_events():
             event_type = event.type
 
-            # Log ALL event types for debugging
-            logger.info(f"🔍 Event type: {event_type}, item type: {getattr(event, 'item', {}).type if hasattr(event, 'item') else 'N/A'}")
+            # Debug logging (can be disabled in production)
+            # logger.info(f"🔍 Event type: {event_type}, item type: {getattr(event, 'item', {}).type if hasattr(event, 'item') else 'N/A'}")
 
             # Skip raw response events (use run_item_stream_event instead)
             if event_type == "raw_response_event":
                 continue
 
-            # Handle run item stream events (this is the correct way to handle tool calls and outputs)
+            # Handle run item stream events (this is the correct way per openai-agents docs)
             elif event_type == "run_item_stream_event":
                 item = event.item
 
                 if item.type == "tool_call_item":
-                    # Tool call started
+                    # Tool call started - access raw_item for function name and call_id
                     raw_item = getattr(item, "raw_item", None)
-                    logger.info(f"🔍 DEBUG raw_item: {raw_item}")
+
+                    # CRITICAL FIX: raw_item is ResponseFunctionToolCall object, use attribute access
                     if raw_item:
-                        logger.info(f"🔍 DEBUG raw_item attributes: {dir(raw_item)}")
-                        logger.info(f"🔍 DEBUG raw_item.name: {getattr(raw_item, 'name', 'NO_NAME')}")
+                        function_name = getattr(raw_item, "name", "unknown")
+                        call_id = getattr(raw_item, "call_id", "unknown")
+                        function_calls_active[call_id] = function_name
 
-                    function_name = getattr(raw_item, "name", "unknown") if raw_item else "unknown"
-                    call_id = getattr(raw_item, "call_id", "unknown") if raw_item else "unknown"
-                    function_calls_active[call_id] = function_name
+                        logger.info(f"🔧 Tool call started: {function_name}, call_id={call_id}")
 
-                    yield {
-                        "type": "tool_execution",
-                        "tool_name": function_name,
-                        "status": "started"
-                    }
+                        yield {
+                            "type": "tool_execution",
+                            "tool_name": function_name,
+                            "status": "started"
+                        }
 
                 elif item.type == "tool_call_output_item":
-                    # Tool call output received
+                    # Tool call output - use event.item.output directly per docs
+                    output_str = getattr(item, "output", "{}")
+
+                    # Get call_id from raw_item - handle both dict and object formats
                     raw_item = getattr(item, "raw_item", None)
-                    call_id = getattr(raw_item, "call_id", None) if raw_item else None
+                    if isinstance(raw_item, dict):
+                        call_id = raw_item.get("call_id")
+                    else:
+                        call_id = getattr(raw_item, "call_id", None) if raw_item else None
+
+                    logger.info(f"✅ Tool call output received: call_id={call_id}, function={function_calls_active.get(call_id, 'unknown')}")
+
                     if call_id and call_id in function_calls_active:
                         function_name = function_calls_active[call_id]
-                        output_str = getattr(raw_item, "output", "{}") if raw_item else "{}"
 
                         try:
                             output_data = json.loads(output_str) if isinstance(output_str, str) else output_str
@@ -469,7 +477,7 @@ async def run_agent_agentic(
                             logger.error(f"❌ Failed to parse output: {parse_err}")
                             output_data = {"output": str(output_str)}
 
-                        logger.info(f"🔍 Tool output for {function_name}: {output_data}")
+                        logger.info(f"✅ Tool output for {function_name}: {output_data}")
 
                         yield {
                             "type": "tool_execution",
@@ -498,7 +506,7 @@ async def run_agent_agentic(
                         del function_calls_active[call_id]
 
                 elif item.type == "message_output_item":
-                    # Assistant message output
+                    # Assistant message output - use ItemHelpers per docs
                     from agents import ItemHelpers
                     text_content = ItemHelpers.text_message_output(item)
                     if text_content:
