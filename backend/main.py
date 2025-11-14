@@ -93,28 +93,33 @@ async def websocket_endpoint(websocket: WebSocket):
                 message = json.loads(data)
                 message_type = message.get("type")
                 content = message.get("content", "")
+                previous_response_id = message.get("previous_response_id")
                 logger.info(f"📩 Parsed message type='{message_type}', content_length={len(content)}")
 
-                # Echo user message back to client
-                if message_type == "user_message":
-                    logger.info(f"💬 User message: '{content[:50]}...'")
+                # Handle user message or continue execution request
+                if message_type in ["user_message", "continue_execution"]:
+                    if message_type == "user_message":
+                        logger.info(f"💬 User message: '{content[:50]}...'")
 
-                    echo_msg = {
-                        "type": "user_message",
-                        "content": content,
-                        "timestamp": datetime.utcnow().isoformat()
-                    }
-                    await websocket.send_json(echo_msg)
-                    logger.info("✅ Echoed user message back to client")
+                        echo_msg = {
+                            "type": "user_message",
+                            "content": content,
+                            "timestamp": datetime.utcnow().isoformat()
+                        }
+                        await websocket.send_json(echo_msg)
+                        logger.info("✅ Echoed user message back to client")
 
-                    # Add user message to history
-                    conversation_history.append({"role": "user", "content": content})
-                    logger.info(f"📝 Added to history (total messages: {len(conversation_history)})")
+                        # Add user message to history
+                        conversation_history.append({"role": "user", "content": content})
+                        logger.info(f"📝 Added to history (total messages: {len(conversation_history)})")
 
-                    # Keep only last N messages
-                    if len(conversation_history) > max_history_messages:
-                        conversation_history = conversation_history[-max_history_messages:]
-                        logger.info(f"🔄 Trimmed history to {len(conversation_history)} messages")
+                        # Keep only last N messages
+                        if len(conversation_history) > max_history_messages:
+                            conversation_history = conversation_history[-max_history_messages:]
+                            logger.info(f"🔄 Trimmed history to {len(conversation_history)} messages")
+                    else:
+                        # Continue execution - content is the original input
+                        logger.info(f"🔄 Continue execution request with response_id: {previous_response_id}")
 
                     # Run agent and stream responses
                     logger.info("🤖 Invoking agent with streaming...")
@@ -124,7 +129,8 @@ async def websocket_endpoint(websocket: WebSocket):
                     async for event in run_agent(
                         user_input=content,
                         db=db,
-                        conversation_history=conversation_history[:-1]  # Pass history without current message
+                        conversation_history=conversation_history[:-1] if message_type == "user_message" else conversation_history,
+                        previous_response_id=previous_response_id
                     ):
                         event_count += 1
                         event_type = event.get("type")

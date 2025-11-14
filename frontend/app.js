@@ -10,7 +10,9 @@ const state = {
     isConnected: false,
     charts: {},  // Store Chart.js instances
     currentMessageDiv: null,  // Track current streaming message
-    currentReasoningDiv: null  // Track current streaming reasoning
+    currentReasoningDiv: null,  // Track current streaming reasoning
+    pendingResponseId: null,  // Track response_id for continue execution
+    lastUserInput: null  // Track last user input for continue
 };
 
 // DOM elements
@@ -299,6 +301,9 @@ function handleMessage(message) {
         case 'error':
             addErrorMessage(message.error);
             break;
+        case 'max_turns_exceeded':
+            addMaxTurnsMessage(message);
+            break;
     }
 }
 
@@ -344,6 +349,52 @@ function addErrorMessage(error) {
     const messageDiv = document.createElement('div');
     messageDiv.className = 'message error-message';
     messageDiv.textContent = `❌ Error: ${error}`;
+    terminalMessages.appendChild(messageDiv);
+    scrollToBottom();
+}
+
+function addMaxTurnsMessage(message) {
+    // Store response_id for continue execution
+    state.pendingResponseId = message.response_id;
+
+    const messageDiv = document.createElement('div');
+    messageDiv.className = 'message max-turns-message';
+    messageDiv.style.backgroundColor = '#2a2a2a';
+    messageDiv.style.borderLeft = '3px solid #ffa500';
+    messageDiv.style.padding = '15px';
+    messageDiv.style.marginLeft = '5px';
+
+    const textDiv = document.createElement('div');
+    textDiv.textContent = message.message;
+    textDiv.style.marginBottom = '10px';
+    textDiv.style.color = '#ffa500';
+
+    const buttonDiv = document.createElement('div');
+    const continueButton = document.createElement('button');
+    continueButton.textContent = 'Continue';
+    continueButton.style.padding = '8px 20px';
+    continueButton.style.backgroundColor = '#4CAF50';
+    continueButton.style.color = 'white';
+    continueButton.style.border = 'none';
+    continueButton.style.borderRadius = '4px';
+    continueButton.style.cursor = 'pointer';
+    continueButton.style.fontSize = '14px';
+    continueButton.style.fontWeight = 'bold';
+
+    continueButton.onclick = () => {
+        // Send continue execution request
+        if (state.pendingResponseId && state.lastUserInput) {
+            sendContinue(state.lastUserInput, state.pendingResponseId);
+            // Disable button after click
+            continueButton.disabled = true;
+            continueButton.textContent = 'Continuing...';
+            continueButton.style.backgroundColor = '#666';
+        }
+    };
+
+    buttonDiv.appendChild(continueButton);
+    messageDiv.appendChild(textDiv);
+    messageDiv.appendChild(buttonDiv);
     terminalMessages.appendChild(messageDiv);
     scrollToBottom();
 }
@@ -469,6 +520,9 @@ function sendMessage() {
         return;
     }
 
+    // Track last user input for continue execution
+    state.lastUserInput = message;
+
     console.log('Sending message to WebSocket');
     state.ws.send(JSON.stringify({
         type: 'user_message',
@@ -477,6 +531,24 @@ function sendMessage() {
 
     userInput.value = '';
     console.log('Message sent successfully');
+}
+
+function sendContinue(originalInput, responseId) {
+    if (!state.isConnected || !state.ws) {
+        console.log('Cannot continue - not connected');
+        return;
+    }
+
+    console.log('Sending continue_execution with response_id:', responseId);
+
+    const message = {
+        type: 'continue_execution',
+        content: originalInput,
+        previous_response_id: responseId
+    };
+
+    state.ws.send(JSON.stringify(message));
+    console.log('Continue execution request sent');
 }
 
 sendButton.addEventListener('click', sendMessage);

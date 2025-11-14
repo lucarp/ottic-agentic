@@ -12,6 +12,7 @@ import httpx
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from agents import Agent, Runner, function_tool, WebSearchTool, ModelSettings
+from agents.exceptions import MaxTurnsExceeded
 from openai.types.shared.reasoning import Reasoning
 from sqlalchemy.orm import Session
 
@@ -400,14 +401,23 @@ Be helpful, accurate, and create high-quality artifacts.""",
 async def run_agent_agentic(
     user_input: str,
     db: Session,
-    conversation_history: list[dict[str, str]] | None = None
+    conversation_history: list[dict[str, str]] | None = None,
+    previous_response_id: str | None = None
 ) -> AsyncGenerator[dict[str, Any], None]:
     """
     Run the agent with streaming support for the frontend.
 
     Yields events compatible with the existing WebSocket frontend.
+
+    Args:
+        user_input: The user's input message
+        db: Database session
+        conversation_history: Optional conversation history
+        previous_response_id: Optional response ID to continue from (for max_turns exceeded)
     """
     logger.info(f"🤖 Starting Agent run for: '{user_input[:50]}...'")
+    if previous_response_id:
+        logger.info(f"📄 Continuing from previous response: {previous_response_id}")
 
     try:
         # Create agent with database session
@@ -424,10 +434,15 @@ async def run_agent_agentic(
             full_input = f"Previous conversation:\n{history_text}\n\nCurrent request: {user_input}"
 
         # Run agent with streaming
-        result = Runner.run_streamed(agent, full_input)
+        result = Runner.run_streamed(
+            agent,
+            full_input,
+            previous_response_id=previous_response_id
+        )
 
         current_text_delta = ""
         function_calls_active = {}
+        last_response_id = None
 
         async for event in result.stream_events():
             event_type = event.type
@@ -536,6 +551,16 @@ async def run_agent_agentic(
         yield {"type": "response_complete"}
 
         logger.info("✅ Agent run completed successfully")
+
+    except MaxTurnsExceeded as e:
+        # Agent hit max turns limit - offer to continue
+        logger.warning(f"⚠️ Max turns exceeded - offering continue option")
+        last_response_id = result.last_response_id if hasattr(result, 'last_response_id') else None
+        yield {
+            "type": "max_turns_exceeded",
+            "message": "The agent has reached the maximum number of thinking rounds (10). Would you like to continue?",
+            "response_id": last_response_id
+        }
 
     except Exception as e:
         logger.error(f"❌ Agent run failed: {type(e).__name__}: {e}", exc_info=True)
