@@ -216,6 +216,254 @@ const ArtifactRenderers = {
         html += `</div>`;
 
         return html;
+    },
+
+    // ========================================================================
+    // SEO Analysis Artifact Renderers - SE Ranking Integration
+    // ========================================================================
+
+    domain_overview: (data) => {
+        const {
+            domain,
+            total_keywords,
+            organic_traffic,
+            organic_traffic_value,
+            paid_keywords,
+            paid_traffic,
+            paid_traffic_value,
+            currency,
+            title
+        } = data;
+
+        const formatNumber = (num) => num.toLocaleString();
+        const formatCurrency = (num) => `${currency} ${num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+        let html = '';
+        if (title) html += `<h2 style="margin-bottom: 24px; color: #fff; border-bottom: 2px solid #3b82f6; padding-bottom: 12px;">${title}</h2>`;
+
+        html += `<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 24px;">`;
+
+        // Organic Traffic Card
+        html += `
+            <div style="background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); padding: 24px; border-radius: 12px; border: 1px solid #334155; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+                <div style="display: flex; align-items: center; margin-bottom: 12px;">
+                    <div style="background: #10b981; width: 40px; height: 40px; border-radius: 8px; display: flex; align-items: center; justify-content: center; margin-right: 12px;">
+                        <span style="font-size: 20px;">📈</span>
+                    </div>
+                    <h3 style="color: #10b981; margin: 0; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">Organic Traffic</h3>
+                </div>
+                <div style="font-size: 36px; font-weight: bold; color: #fff; margin-bottom: 8px;">${formatNumber(organic_traffic)}</div>
+                <div style="color: #94a3b8; font-size: 13px; margin-bottom: 4px;">${formatNumber(total_keywords)} keywords</div>
+                <div style="color: #10b981; font-size: 16px; font-weight: 600;">${formatCurrency(organic_traffic_value)}/mo</div>
+            </div>
+        `;
+
+        // Paid Traffic Card
+        html += `
+            <div style="background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); padding: 24px; border-radius: 12px; border: 1px solid #334155; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+                <div style="display: flex; align-items: center; margin-bottom: 12px;">
+                    <div style="background: #f59e0b; width: 40px; height: 40px; border-radius: 8px; display: flex; align-items: center; justify-content: center; margin-right: 12px;">
+                        <span style="font-size: 20px;">💰</span>
+                    </div>
+                    <h3 style="color: #f59e0b; margin: 0; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">Paid Traffic</h3>
+                </div>
+                <div style="font-size: 36px; font-weight: bold; color: #fff; margin-bottom: 8px;">${formatNumber(paid_traffic)}</div>
+                <div style="color: #94a3b8; font-size: 13px; margin-bottom: 4px;">${formatNumber(paid_keywords)} keywords</div>
+                <div style="color: #f59e0b; font-size: 16px; font-weight: 600;">${formatCurrency(paid_traffic_value)}/mo</div>
+            </div>
+        `;
+
+        // Total Value Card
+        const totalTraffic = organic_traffic + paid_traffic;
+        const totalValue = organic_traffic_value + paid_traffic_value;
+        html += `
+            <div style="background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); padding: 24px; border-radius: 12px; border: 1px solid #334155; box-shadow: 0 4px 6px rgba(0,0,0,0.3);">
+                <div style="display: flex; align-items: center; margin-bottom: 12px;">
+                    <div style="background: #6366f1; width: 40px; height: 40px; border-radius: 8px; display: flex; align-items: center; justify-content: center; margin-right: 12px;">
+                        <span style="font-size: 20px;">🎯</span>
+                    </div>
+                    <h3 style="color: #6366f1; margin: 0; font-size: 14px; text-transform: uppercase; letter-spacing: 0.5px;">Total Estimated</h3>
+                </div>
+                <div style="font-size: 36px; font-weight: bold; color: #fff; margin-bottom: 8px;">${formatNumber(totalTraffic)}</div>
+                <div style="color: #94a3b8; font-size: 13px; margin-bottom: 4px;">visitors/month</div>
+                <div style="color: #6366f1; font-size: 16px; font-weight: 600;">${formatCurrency(totalValue)}/mo</div>
+            </div>
+        `;
+
+        html += `</div>`;
+
+        // Domain info footer
+        html += `<div style="background: #0f172a; padding: 16px; border-radius: 8px; border-left: 4px solid #3b82f6;">`;
+        html += `<div style="color: #94a3b8; font-size: 13px;">Analyzing domain: <span style="color: #3b82f6; font-weight: 600;">${domain}</span></div>`;
+        html += `<div style="color: #64748b; font-size: 12px; margin-top: 4px;">Data source: SE Ranking API</div>`;
+        html += `</div>`;
+
+        return html;
+    },
+
+    competitor_analysis: (data) => {
+        const { target_domain, source, type, competitors, total_competitors, title } = data;
+
+        let html = '';
+        if (title) html += `<h2 style="margin-bottom: 24px; color: #fff; border-bottom: 2px solid #8b5cf6; padding-bottom: 12px;">${title}</h2>`;
+
+        // Summary header
+        html += `<div style="background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); padding: 20px; border-radius: 8px; margin-bottom: 24px; border: 1px solid #334155;">`;
+        html += `<div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">`;
+        html += `<span style="font-size: 24px;">🎯</span>`;
+        html += `<h3 style="color: #fff; margin: 0;">Found ${total_competitors} ${type} competitors</h3>`;
+        html += `</div>`;
+        html += `<div style="color: #94a3b8; font-size: 14px;">Competing with <span style="color: #8b5cf6; font-weight: 600;">${target_domain}</span> in <span style="color: #8b5cf6; font-weight: 600;">${source.toUpperCase()}</span></div>`;
+        html += `</div>`;
+
+        if (competitors.length === 0) {
+            html += `<div style="text-align: center; padding: 40px; color: #64748b;">No competitors found</div>`;
+            return html;
+        }
+
+        // Competitors table
+        html += `
+            <div style="overflow-x: auto;">
+                <table style="width: 100%; border-collapse: collapse; background: #1a1a1a; border-radius: 8px; overflow: hidden;">
+                    <thead>
+                        <tr style="background: #262626;">
+                            <th style="padding: 14px; text-align: left; border-bottom: 2px solid #333; color: #8b5cf6; font-weight: 600; width: 80px;">Rank</th>
+                            <th style="padding: 14px; text-align: left; border-bottom: 2px solid #333; color: #8b5cf6; font-weight: 600;">Competitor Domain</th>
+                            <th style="padding: 14px; text-align: right; border-bottom: 2px solid #333; color: #8b5cf6; font-weight: 600; width: 180px;">Common Keywords</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+        `;
+
+        competitors.forEach((comp, index) => {
+            const isTopCompetitor = comp.rank === 1;
+            const bgColor = isTopCompetitor ? '#2d1b4e' : (index % 2 === 0 ? '#1a1a1a' : '#0f0f0f');
+
+            html += `
+                <tr style="background: ${bgColor}; border-bottom: 1px solid #333;">
+                    <td style="padding: 14px; color: ${isTopCompetitor ? '#8b5cf6' : '#e0e0e0'}; font-weight: ${isTopCompetitor ? 'bold' : 'normal'};">
+                        ${isTopCompetitor ? '👑 ' : ''}#${comp.rank}
+                    </td>
+                    <td style="padding: 14px;">
+                        <a href="https://${comp.domain}" target="_blank" rel="noopener noreferrer" style="color: ${isTopCompetitor ? '#a78bfa' : '#3b82f6'}; text-decoration: none; font-weight: 500;">
+                            ${comp.domain}
+                        </a>
+                    </td>
+                    <td style="padding: 14px; text-align: right; color: #e0e0e0; font-weight: 600;">
+                        ${comp.common_keywords.toLocaleString()}
+                    </td>
+                </tr>
+            `;
+        });
+
+        html += `
+                    </tbody>
+                </table>
+            </div>
+        `;
+
+        return html;
+    },
+
+    keyword_research: (data) => {
+        const {
+            analysis_type,
+            primary_keyword,
+            target_domain,
+            competitor_domain,
+            source,
+            keywords,
+            total_results,
+            title
+        } = data;
+
+        const getDifficultyColor = (difficulty) => {
+            if (difficulty <= 30) return '#10b981'; // Easy - green
+            if (difficulty <= 60) return '#f59e0b'; // Medium - orange
+            return '#ef4444'; // Hard - red
+        };
+
+        const getDifficultyLabel = (difficulty) => {
+            if (difficulty <= 30) return 'Easy';
+            if (difficulty <= 60) return 'Medium';
+            return 'Hard';
+        };
+
+        let html = '';
+        if (title) html += `<h2 style="margin-bottom: 24px; color: #fff; border-bottom: 2px solid #10b981; padding-bottom: 12px;">${title}</h2>`;
+
+        // Analysis info header
+        html += `<div style="background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%); padding: 20px; border-radius: 8px; margin-bottom: 24px; border: 1px solid #334155;">`;
+        html += `<div style="display: flex; align-items: center; gap: 12px; margin-bottom: 8px;">`;
+        html += `<span style="font-size: 24px;">🔍</span>`;
+        html += `<h3 style="color: #fff; margin: 0;">Found ${total_results} keywords</h3>`;
+        html += `</div>`;
+        html += `<div style="color: #94a3b8; font-size: 14px;">`;
+        if (analysis_type === 'similar') {
+            html += `Similar to: <span style="color: #10b981; font-weight: 600;">${primary_keyword}</span>`;
+        } else if (analysis_type === 'gap') {
+            html += `Keywords where <span style="color: #ef4444; font-weight: 600;">${competitor_domain}</span> ranks but <span style="color: #3b82f6; font-weight: 600;">${target_domain}</span> doesn't`;
+        }
+        html += ` • Region: <span style="color: #10b981; font-weight: 600;">${source.toUpperCase()}</span>`;
+        html += `</div>`;
+        html += `</div>`;
+
+        if (keywords.length === 0) {
+            html += `<div style="text-align: center; padding: 40px; color: #64748b;">No keywords found</div>`;
+            return html;
+        }
+
+        // Keywords table
+        html += `
+            <div style="overflow-x: auto;">
+                <table style="width: 100%; border-collapse: collapse; background: #1a1a1a; border-radius: 8px; overflow: hidden;">
+                    <thead>
+                        <tr style="background: #262626;">
+                            <th style="padding: 14px; text-align: left; border-bottom: 2px solid #333; color: #10b981; font-weight: 600;">Keyword</th>
+                            <th style="padding: 14px; text-align: right; border-bottom: 2px solid #333; color: #10b981; font-weight: 600; width: 120px;">Volume</th>
+                            <th style="padding: 14px; text-align: right; border-bottom: 2px solid #333; color: #10b981; font-weight: 600; width: 100px;">CPC</th>
+                            <th style="padding: 14px; text-align: center; border-bottom: 2px solid #333; color: #10b981; font-weight: 600; width: 140px;">Difficulty</th>
+                            ${analysis_type === 'gap' ? '<th style="padding: 14px; text-align: center; border-bottom: 2px solid #333; color: #10b981; font-weight: 600; width: 100px;">Position</th>' : ''}
+                        </tr>
+                    </thead>
+                    <tbody>
+        `;
+
+        keywords.forEach((kw, index) => {
+            const bgColor = index % 2 === 0 ? '#1a1a1a' : '#0f0f0f';
+            const diffColor = getDifficultyColor(kw.difficulty);
+            const diffLabel = getDifficultyLabel(kw.difficulty);
+
+            html += `
+                <tr style="background: ${bgColor}; border-bottom: 1px solid #333;">
+                    <td style="padding: 14px; color: #e0e0e0; font-weight: 500;">${kw.keyword}</td>
+                    <td style="padding: 14px; text-align: right; color: #94a3b8;">${kw.volume.toLocaleString()}</td>
+                    <td style="padding: 14px; text-align: right; color: #94a3b8;">$${kw.cpc.toFixed(2)}</td>
+                    <td style="padding: 14px; text-align: center;">
+                        <div style="display: inline-block; padding: 4px 12px; background: ${diffColor}22; border: 1px solid ${diffColor}; border-radius: 12px; color: ${diffColor}; font-size: 12px; font-weight: 600;">
+                            ${kw.difficulty} - ${diffLabel}
+                        </div>
+                    </td>
+                    ${analysis_type === 'gap' && kw.position ? `<td style="padding: 14px; text-align: center; color: #e0e0e0; font-weight: 600;">#${kw.position}</td>` : (analysis_type === 'gap' ? '<td style="padding: 14px; text-align: center; color: #64748b;">-</td>' : '')}
+                </tr>
+            `;
+        });
+
+        html += `
+                    </tbody>
+                </table>
+            </div>
+        `;
+
+        // Legend footer
+        html += `<div style="margin-top: 16px; padding: 12px; background: #0f172a; border-radius: 6px; font-size: 12px; color: #64748b;">`;
+        html += `<strong style="color: #94a3b8;">Legend:</strong> `;
+        html += `<span style="color: #10b981;">Easy (0-30)</span> • `;
+        html += `<span style="color: #f59e0b;">Medium (31-60)</span> • `;
+        html += `<span style="color: #ef4444;">Hard (61-100)</span>`;
+        html += `</div>`;
+
+        return html;
     }
 };
 

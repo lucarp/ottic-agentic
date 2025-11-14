@@ -25,7 +25,13 @@ from schemas import (
     PaymentLinkArtifact,
     MarkdownArtifact,
     CodeArtifact,
+    DomainOverviewArtifact,
+    CompetitorAnalysisArtifact,
+    CompetitorData,
+    KeywordResearchArtifact,
+    KeywordData,
 )
+from seranking_client import get_seranking_client
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -334,6 +340,212 @@ def create_artifact_tools(db_session: Session):
             logger.error(f"Error creating payment link artifact: {e}")
             return json.dumps({"success": False, "error": str(e)})
 
+    # ========================================================================
+    # SEO Analysis Tools - SE Ranking API Integration
+    # ========================================================================
+
+    @function_tool
+    async def analyze_domain_seo(
+        domain: Annotated[str, "Domain to analyze (e.g., 'stripe.com', 'shopify.com')"],
+        currency: Annotated[str, "Currency code for traffic values (e.g., 'USD', 'EUR')"] = "USD",
+    ) -> str:
+        """Analyze a domain's SEO performance including organic/paid traffic, keywords, and estimated traffic value."""
+        try:
+            # Get SE Ranking client and fetch domain overview
+            seranking = get_seranking_client()
+            api_data = await seranking.get_domain_overview(domain, currency)
+
+            # Extract data from API response
+            # SE Ranking API returns arrays for organic and adv (paid) data
+            organic_list = api_data.get("organic", [])
+            paid_list = api_data.get("adv", [])  # Note: API uses "adv" not "paid"
+
+            # Get first item from each list (worldwide data)
+            organic_data = organic_list[0] if organic_list else {}
+            paid_data = paid_list[0] if paid_list else {}
+
+            artifact_data = DomainOverviewArtifact(
+                domain=domain,
+                total_keywords=organic_data.get("keywords_count", 0),
+                organic_traffic=organic_data.get("traffic_sum", 0),
+                organic_traffic_value=float(organic_data.get("price_sum", 0)),
+                paid_keywords=paid_data.get("keywords_count", 0),
+                paid_traffic=paid_data.get("traffic_sum", 0),
+                paid_traffic_value=float(paid_data.get("price_sum", 0)),
+                currency=currency,
+                title=f"SEO Overview: {domain}"
+            ).model_dump()
+
+            artifact = create_artifact(
+                db=db_session,
+                artifact_type="domain_overview",
+                data=artifact_data,
+                status=ArtifactStatus.FINAL
+            )
+
+            return json.dumps({
+                "success": True,
+                "artifact_id": str(artifact.id),
+                "type": "domain_overview",
+                "message": f"Successfully analyzed SEO performance for {domain}"
+            })
+        except Exception as e:
+            logger.error(f"Error analyzing domain SEO: {e}")
+            return json.dumps({"success": False, "error": str(e)})
+
+    @function_tool
+    async def analyze_competitors(
+        domain: Annotated[str, "Target domain to find competitors for (e.g., 'stripe.com')"],
+        source: Annotated[str, "Regional database - country code (e.g., 'us', 'uk', 'ca', 'de')"] = "us",
+        type: Annotated[str, "Analysis type: 'organic' or 'paid'"] = "organic",
+        limit: Annotated[int, "Maximum number of competitors to return (1-100)"] = 10,
+    ) -> str:
+        """Find and analyze top SEO competitors for a domain, showing which domains compete for the same keywords."""
+        try:
+            # Get SE Ranking client and fetch competitors
+            seranking = get_seranking_client()
+            api_data = await seranking.get_competitors(domain, source, type, limit)
+
+            # SE Ranking returns a list directly, not a dict with "competitors" key
+            competitors_list = api_data if isinstance(api_data, list) else []
+
+            # Transform to our schema format
+            competitors = [
+                CompetitorData(
+                    rank=idx + 1,
+                    domain=comp.get("domain", ""),
+                    common_keywords=comp.get("common_keywords", 0)
+                )
+                for idx, comp in enumerate(competitors_list)
+            ]
+
+            artifact_data = CompetitorAnalysisArtifact(
+                target_domain=domain,
+                source=source,
+                type=type,
+                competitors=competitors,
+                total_competitors=len(competitors),
+                title=f"Competitor Analysis: {domain} ({source.upper()})"
+            ).model_dump()
+
+            artifact = create_artifact(
+                db=db_session,
+                artifact_type="competitor_analysis",
+                data=artifact_data,
+                status=ArtifactStatus.FINAL
+            )
+
+            return json.dumps({
+                "success": True,
+                "artifact_id": str(artifact.id),
+                "type": "competitor_analysis",
+                "message": f"Found {len(competitors)} competitors for {domain}"
+            })
+        except Exception as e:
+            logger.error(f"Error analyzing competitors: {e}")
+            return json.dumps({"success": False, "error": str(e)})
+
+    @function_tool
+    async def research_keywords(
+        analysis_type: Annotated[str, "Type of analysis: 'similar' (related keywords), 'gap' (competitor keywords you don't rank for)"],
+        keyword: Annotated[str | None, "Seed keyword for 'similar' analysis (e.g., 'payment gateway')"] = None,
+        target_domain: Annotated[str | None, "Your domain for 'gap' analysis (e.g., 'stripe.com')"] = None,
+        competitor_domain: Annotated[str | None, "Competitor domain for 'gap' analysis (e.g., 'paypal.com')"] = None,
+        source: Annotated[str, "Regional database - country code (e.g., 'us', 'uk', 'ca')"] = "us",
+        limit: Annotated[int, "Maximum number of keywords to return (1-100)"] = 50,
+    ) -> str:
+        """Research keyword opportunities: find similar keywords to expand content, or identify competitor keyword gaps."""
+        try:
+            seranking = get_seranking_client()
+
+            if analysis_type == "similar":
+                if not keyword:
+                    return json.dumps({"success": False, "error": "keyword parameter required for similar analysis"})
+
+                # Get similar keywords
+                api_data = await seranking.get_similar_keywords(keyword, source, limit)
+                keywords_list = api_data.get("keywords", [])
+
+                # Transform to our schema
+                keywords = [
+                    KeywordData(
+                        keyword=kw.get("keyword", ""),
+                        volume=kw.get("volume", 0),
+                        cpc=float(kw.get("cpc", 0)),
+                        difficulty=kw.get("difficulty", 0),
+                        position=None
+                    )
+                    for kw in keywords_list
+                ]
+
+                title = f"Similar Keywords: {keyword}"
+
+            elif analysis_type == "gap":
+                if not target_domain or not competitor_domain:
+                    return json.dumps({
+                        "success": False,
+                        "error": "target_domain and competitor_domain required for gap analysis"
+                    })
+
+                # Get keyword gaps (keywords competitor ranks for that you don't)
+                api_data = await seranking.get_keyword_comparison(
+                    domain=competitor_domain,  # Keywords THEY rank for
+                    competitor=target_domain,  # That YOU don't rank for
+                    source=source,
+                    diff=1,  # Only differences
+                    limit=limit
+                )
+                # SE Ranking returns a list directly for keyword_comparison
+                keywords_list = api_data if isinstance(api_data, list) else []
+
+                # Transform to our schema
+                keywords = [
+                    KeywordData(
+                        keyword=kw.get("keyword", ""),
+                        volume=kw.get("volume", 0),
+                        cpc=float(kw.get("cpc", 0)),
+                        difficulty=kw.get("difficulty", 0),
+                        position=kw.get("position")  # Competitor's position
+                    )
+                    for kw in keywords_list
+                ]
+
+                title = f"Keyword Gap: {competitor_domain} vs {target_domain}"
+
+            else:
+                return json.dumps({
+                    "success": False,
+                    "error": f"Invalid analysis_type: {analysis_type}. Use 'similar' or 'gap'"
+                })
+
+            artifact_data = KeywordResearchArtifact(
+                analysis_type=analysis_type,
+                primary_keyword=keyword,
+                target_domain=target_domain,
+                competitor_domain=competitor_domain,
+                source=source,
+                keywords=keywords,
+                total_results=len(keywords),
+                title=title
+            ).model_dump()
+
+            artifact = create_artifact(
+                db=db_session,
+                artifact_type="keyword_research",
+                data=artifact_data,
+                status=ArtifactStatus.FINAL
+            )
+
+            return json.dumps({
+                "success": True,
+                "artifact_id": str(artifact.id),
+                "type": "keyword_research",
+                "message": f"Found {len(keywords)} keywords for {analysis_type} analysis"
+            })
+        except Exception as e:
+            logger.error(f"Error researching keywords: {e}")
+            return json.dumps({"success": False, "error": str(e)})
+
     # Return all tools
     return [
         create_csv_artifact,
@@ -342,6 +554,9 @@ def create_artifact_tools(db_session: Session):
         create_code_artifact,
         create_html_artifact,
         create_payment_link_artifact,
+        analyze_domain_seo,
+        analyze_competitors,
+        research_keywords,
     ]
 
 
@@ -374,13 +589,18 @@ You have access to:
 - Code snippets with syntax highlighting
 - HTML content for rich displays
 - Payment links for transactions
+- SEO analysis tools powered by SE Ranking API:
+  * Domain SEO overview (traffic, keywords, value estimates)
+  * Competitor analysis (find competing domains and keyword overlaps)
+  * Keyword research (similar keywords, competitor keyword gaps)
 
 When users request information or data:
 1. Use web search if you need current information
 2. Fetch URLs if you need to read specific webpages
-3. Create appropriate artifacts to present the information clearly
-4. Always create artifacts in the user's requested language
-5. Provide clear, well-structured outputs
+3. For SEO-related requests, use the SEO analysis tools to provide data-driven insights
+4. Create appropriate artifacts to present the information clearly
+5. Always create artifacts in the user's requested language
+6. Provide clear, well-structured outputs
 
 Be helpful, accurate, and create high-quality artifacts.""",
         tools=tools,

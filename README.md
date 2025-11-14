@@ -25,6 +25,9 @@ Each artifact type has:
 | `markdown` | Markdown documents | Reports, documentation |
 | `code` | Syntax-highlighted code snippets | Code examples, scripts |
 | `fetched_link` | Extracted web page content | Reading articles, documentation |
+| `domain_overview` | SEO domain performance metrics | Traffic analysis, keyword tracking |
+| `competitor_analysis` | SEO competitor identification | Competitive research, market analysis |
+| `keyword_research` | Keyword opportunities and gaps | Content strategy, SEO optimization |
 
 ## Web Search & URL Fetching
 
@@ -43,6 +46,33 @@ Custom tool to fetch and extract content from specific URLs:
 - Markdown-formatted output
 - Perfect for reading full articles or documentation
 
+## SEO Analysis (SE Ranking API)
+
+The platform integrates with **SE Ranking** to provide professional SEO analysis capabilities:
+
+### Domain SEO Overview
+Analyze any domain's search performance:
+- Organic & paid traffic estimates
+- Total keywords ranking
+- Traffic value in multiple currencies
+- Monthly visitor projections
+
+### Competitor Analysis
+Identify and analyze SEO competitors:
+- Find domains competing for the same keywords
+- See keyword overlap counts
+- Supports regional databases (US, UK, CA, DE, etc.)
+- Organic and paid search analysis
+
+### Keyword Research
+Discover keyword opportunities:
+- **Similar Keywords**: Find semantically related terms to expand your content
+- **Keyword Gap Analysis**: Identify keywords competitors rank for that you don't
+- Search volume, CPC, and difficulty scores
+- Color-coded difficulty ratings (Easy/Medium/Hard)
+
+**Powered by:** SE Ranking Data API
+
 ## Setup
 
 ### 1. Start PostgreSQL
@@ -56,8 +86,12 @@ docker-compose up -d
 
 ```bash
 cp .env.example .env
-# Edit .env and add your OPENAI_API_KEY
+# Edit .env and add your API keys:
+# - OPENAI_API_KEY (required)
+# - SERANKING_API_KEY (required for SEO features)
 ```
+
+**Note**: Get your SE Ranking API key from [SE Ranking API Dashboard](https://seranking.com/api)
 
 ### 3. Install Python Dependencies
 
@@ -120,6 +154,26 @@ What are the latest developments in AI reasoning models?
 ### Fetch and Read a URL
 ```
 Can you read and summarize this article: https://example.com/article
+```
+
+### SEO Domain Analysis
+```
+Analyze the SEO performance of stripe.com
+```
+
+### Find SEO Competitors
+```
+Who are the top 10 competitors for shopify.com in the US?
+```
+
+### Keyword Research - Similar Keywords
+```
+Find keywords similar to "payment gateway"
+```
+
+### Keyword Gap Analysis
+```
+What keywords does paypal.com rank for that stripe.com doesn't?
 ```
 
 ## How It Works

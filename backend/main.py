@@ -6,6 +6,10 @@ import os
 from datetime import datetime
 from typing import Optional
 
+# Load environment variables BEFORE any other imports that need them
+from dotenv import load_dotenv
+load_dotenv()
+
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse

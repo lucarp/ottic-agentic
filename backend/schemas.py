@@ -114,6 +114,78 @@ class FetchedLink(BaseModel):
     summary: Optional[str] = Field(default=None, description="Optional AI-generated summary of the content")
 
 
+# ============================================================================
+# SEO Analysis Artifact Schemas - SE Ranking API Integration
+# ============================================================================
+
+class DomainOverviewArtifact(BaseModel):
+    """Domain SEO overview artifact with traffic and keyword metrics.
+
+    IMPORTANT: Uses strict typing for openai-agents compatibility.
+    All numeric fields are concrete types (int, float).
+    """
+    domain: str = Field(description="Domain being analyzed (e.g., 'stripe.com')")
+    total_keywords: int = Field(description="Total organic keywords ranking")
+    organic_traffic: int = Field(description="Estimated monthly organic traffic")
+    organic_traffic_value: float = Field(description="Estimated monthly value of organic traffic in specified currency")
+    paid_keywords: int = Field(description="Total paid keywords")
+    paid_traffic: int = Field(description="Estimated monthly paid traffic")
+    paid_traffic_value: float = Field(description="Estimated monthly value of paid traffic in specified currency")
+    currency: str = Field(default="USD", description="Currency code for traffic values")
+    title: Optional[str] = Field(default=None, description="Optional title for the overview")
+
+
+class CompetitorData(BaseModel):
+    """Individual competitor data in competitor analysis.
+
+    IMPORTANT: Nested model with strict typing - no Any types.
+    """
+    rank: int = Field(description="Competitor rank (1 = closest competitor)")
+    domain: str = Field(description="Competitor domain name")
+    common_keywords: int = Field(description="Number of keywords in common with target domain")
+
+
+class CompetitorAnalysisArtifact(BaseModel):
+    """Competitor analysis artifact showing top SEO competitors.
+
+    IMPORTANT: Uses list[CompetitorData] for strict typing.
+    """
+    target_domain: str = Field(description="The domain being analyzed")
+    source: str = Field(description="Regional database used (e.g., 'us', 'uk')")
+    type: str = Field(description="Analysis type: 'organic' or 'paid'")
+    competitors: list[CompetitorData] = Field(description="List of competitor domains with metrics")
+    total_competitors: int = Field(description="Total number of competitors found")
+    title: Optional[str] = Field(default=None, description="Optional title for the analysis")
+
+
+class KeywordData(BaseModel):
+    """Individual keyword data in keyword research.
+
+    IMPORTANT: All fields are concrete types for strict JSON schema.
+    """
+    keyword: str = Field(description="The keyword phrase")
+    volume: int = Field(description="Monthly search volume")
+    cpc: float = Field(description="Cost per click in USD")
+    difficulty: int = Field(description="SEO difficulty score (0-100, higher = harder)")
+    position: Optional[int] = Field(default=None, description="Current ranking position (for gap analysis)")
+
+
+class KeywordResearchArtifact(BaseModel):
+    """Keyword research artifact with search volume and competition data.
+
+    IMPORTANT: Uses list[KeywordData] for strict typing.
+    Supports multiple analysis types: similar, related, or competitor gap analysis.
+    """
+    analysis_type: str = Field(description="Type of analysis: 'similar', 'related', or 'gap'")
+    primary_keyword: Optional[str] = Field(default=None, description="Seed keyword for similar/related analysis")
+    target_domain: Optional[str] = Field(default=None, description="Target domain for gap analysis")
+    competitor_domain: Optional[str] = Field(default=None, description="Competitor domain for gap analysis")
+    source: str = Field(default="us", description="Regional database (e.g., 'us', 'uk')")
+    keywords: list[KeywordData] = Field(description="List of keywords with metrics")
+    total_results: int = Field(description="Total number of keywords found")
+    title: Optional[str] = Field(default=None, description="Optional title for the research")
+
+
 class WebSearchTool(BaseModel):
     """Tool for performing web searches using Tavily AI."""
     query: str = Field(description="The search query to find relevant web information")

@@ -76,7 +76,7 @@ Instead of having the LLM output unstructured JSON or markdown, we provide **spe
 
 Each artifact type is a first-class entity with:
 1. Pydantic schema in `backend/schemas.py`
-2. Dedicated tool in `backend/agent.py`
+2. Dedicated tool in `backend/agent_agentic.py`
 3. Specialized renderer in `frontend/app.js`
 
 | Type | Schema | Use Case | Frontend Renderer |
@@ -87,6 +87,96 @@ Each artifact type is a first-class entity with:
 | `markdown` | `MarkdownArtifact` | Documents, reports | Marked.js rendering |
 | `html` | `HtmlArtifact` | Rich content | Sandboxed rendering |
 | `payment_link` | `PaymentLinkArtifact` | Payment requests | Stripe-like UI (mock) |
+| `domain_overview` | `DomainOverviewArtifact` | SEO domain metrics | Metric cards with traffic/keyword data |
+| `competitor_analysis` | `CompetitorAnalysisArtifact` | SEO competitor insights | Table of competing domains |
+| `keyword_research` | `KeywordResearchArtifact` | Keyword opportunities | Color-coded keyword table |
+
+---
+
+## SE Ranking API Integration
+
+The platform integrates with the **SE Ranking Data API** to provide professional SEO analysis capabilities. This enables the agent to deliver data-driven SEO insights without requiring the user to manually fetch data.
+
+### SEO Capabilities
+
+**1. Domain SEO Overview** (`analyze_domain_seo` tool)
+- Provides comprehensive domain metrics including:
+  - Total organic keywords ranking
+  - Estimated monthly organic traffic
+  - Organic traffic value (monetary estimate)
+  - Paid search keywords
+  - Paid traffic estimates
+  - Traffic value by currency
+- Creates `DomainOverviewArtifact` with metric cards visualization
+
+**2. Competitor Analysis** (`analyze_competitors` tool)
+- Identifies top organic or paid search competitors
+- Shows keyword overlap with target domain
+- Supports regional databases (US, UK, CA, DE, etc.)
+- Creates `CompetitorAnalysisArtifact` with ranked competitor table
+
+**3. Keyword Research** (`research_keywords` tool)
+- **Similar Keywords**: Find semantically related keywords to expand content
+- **Keyword Gap Analysis**: Identify keywords competitors rank for that you don't
+- Includes search volume, CPC, and difficulty scores
+- Creates `KeywordResearchArtifact` with color-coded difficulty ratings
+
+### API Configuration
+
+**Environment Variable:**
+```bash
+SERANKING_API_KEY=your_api_key_here
+```
+
+**API Client:** `backend/seranking_client.py`
+- Async HTTP client using `httpx`
+- Built-in rate limiting (10 req/sec)
+- Error handling and retry logic
+- Methods:
+  - `get_domain_overview(domain, currency)`
+  - `get_competitors(domain, source, type, limit)`
+  - `get_keyword_comparison(domain, competitor, source)`
+  - `get_similar_keywords(keyword, source, limit)`
+
+### Example Usage
+
+**Domain Analysis:**
+```
+User: "Analyze the SEO performance of stripe.com"
+Agent: [Uses analyze_domain_seo tool]
+Result: Domain overview artifact with traffic metrics
+```
+
+**Competitor Research:**
+```
+User: "Who are the top competitors for shopify.com?"
+Agent: [Uses analyze_competitors tool with source="us"]
+Result: Competitor analysis artifact with top 10 competing domains
+```
+
+**Keyword Opportunities:**
+```
+User: "Find keywords similar to 'payment gateway'"
+Agent: [Uses research_keywords with analysis_type="similar"]
+Result: Keyword research artifact with 50+ related keywords
+```
+
+**Competitive Keyword Gap:**
+```
+User: "What keywords does paypal.com rank for that stripe.com doesn't?"
+Agent: [Uses research_keywords with analysis_type="gap"]
+Result: Keyword research artifact showing opportunity keywords
+```
+
+### API Cost Considerations
+
+- Each API call consumes SE Ranking API credits
+- Approximate costs per request:
+  - Domain overview: ~50 credits
+  - Competitor analysis: ~100 credits
+  - Keyword research: ~10-50 credits (varies by results)
+- Rate limit: 10 requests per second (enforced by client)
+- Monitor usage via SE Ranking dashboard
 
 ---
 
@@ -101,9 +191,10 @@ ottic-agentic/
 ├── CLAUDE.md                   # This file (developer guide)
 ├── backend/
 │   ├── main.py                 # FastAPI app + WebSocket endpoint
-│   ├── agent.py                # GPT-5 agent with tool execution
+│   ├── agent_agentic.py        # GPT-5 agent with tool execution
 │   ├── database.py             # SQLAlchemy models and helpers
 │   ├── schemas.py              # Pydantic artifact schemas
+│   ├── seranking_client.py     # SE Ranking API client
 │   └── requirements.txt        # Python dependencies
 └── frontend/
     ├── index.html              # Split-screen UI
