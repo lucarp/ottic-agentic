@@ -5,7 +5,7 @@ import json
 import logging
 import os
 from datetime import datetime
-from typing import Annotated, Any, AsyncGenerator
+from typing import Annotated, Any, AsyncGenerator, Optional, List, Dict
 from urllib.parse import urlparse
 
 import httpx
@@ -146,8 +146,8 @@ def create_artifact_tools(db_session: Session):
     def create_csv_artifact(
         headers: Annotated[list[str], "Column headers for the CSV"],
         rows: Annotated[list[list[str]], "Data rows as list of lists (all values as strings)"],
-        title: Annotated[str | None, "Optional title for the CSV"] = None,
-        description: Annotated[str | None, "Optional description"] = None,
+        title: Annotated[Optional[str], "Optional title for the CSV"] = None,
+        description: Annotated[Optional[str], "Optional description"] = None,
     ) -> str:
         """Create a CSV data artifact with headers and rows."""
         try:
@@ -181,9 +181,9 @@ def create_artifact_tools(db_session: Session):
         chart_type: Annotated[str, "Type of chart: 'bar', 'line', 'pie', 'doughnut', 'scatter'"],
         labels: Annotated[list[str], "Labels for the chart data points"],
         datasets: Annotated[list[ChartDataset], "Chart.js datasets with label, data, and styling"],
-        title: Annotated[str | None, "Chart title"] = None,
-        x_axis_label: Annotated[str | None, "X-axis label"] = None,
-        y_axis_label: Annotated[str | None, "Y-axis label"] = None,
+        title: Annotated[Optional[str], "Chart title"] = None,
+        x_axis_label: Annotated[Optional[str], "X-axis label"] = None,
+        y_axis_label: Annotated[Optional[str], "Y-axis label"] = None,
     ) -> str:
         """Create a chart/visualization artifact using Chart.js format."""
         try:
@@ -216,7 +216,7 @@ def create_artifact_tools(db_session: Session):
     @function_tool
     def create_markdown_artifact(
         content: Annotated[str, "Markdown formatted content"],
-        title: Annotated[str | None, "Document title"] = None,
+        title: Annotated[Optional[str], "Document title"] = None,
     ) -> str:
         """Create a markdown document artifact."""
         try:
@@ -246,8 +246,8 @@ def create_artifact_tools(db_session: Session):
     def create_code_artifact(
         code: Annotated[str, "The code content"],
         language: Annotated[str, "Programming language (e.g., 'python', 'javascript', 'sql')"],
-        title: Annotated[str | None, "Code snippet title"] = None,
-        description: Annotated[str | None, "Description of what the code does"] = None,
+        title: Annotated[Optional[str], "Code snippet title"] = None,
+        description: Annotated[Optional[str], "Description of what the code does"] = None,
     ) -> str:
         """Create a code snippet artifact with syntax highlighting."""
         try:
@@ -278,8 +278,8 @@ def create_artifact_tools(db_session: Session):
     @function_tool
     def create_html_artifact(
         html: Annotated[str, "The HTML content to render"],
-        title: Annotated[str | None, "Optional title"] = None,
-        css: Annotated[str | None, "Optional custom CSS styles"] = None,
+        title: Annotated[Optional[str], "Optional title"] = None,
+        css: Annotated[Optional[str], "Optional custom CSS styles"] = None,
     ) -> str:
         """Create an HTML content artifact."""
         try:
@@ -311,7 +311,7 @@ def create_artifact_tools(db_session: Session):
         amount: Annotated[float, "Payment amount in USD (must be greater than 0)"],
         description: Annotated[str, "Payment description"],
         currency: Annotated[str, "Currency code (e.g., 'usd', 'eur')"] = "usd",
-        success_message: Annotated[str | None, "Message shown on success"] = None,
+        success_message: Annotated[Optional[str], "Message shown on success"] = None,
     ) -> str:
         """Create a Stripe payment link artifact."""
         try:
@@ -448,9 +448,9 @@ def create_artifact_tools(db_session: Session):
     @function_tool
     async def research_keywords(
         analysis_type: Annotated[str, "Type of analysis: 'similar' (related keywords), 'gap' (competitor keywords you don't rank for)"],
-        keyword: Annotated[str | None, "Seed keyword for 'similar' analysis (e.g., 'payment gateway')"] = None,
-        target_domain: Annotated[str | None, "Your domain for 'gap' analysis (e.g., 'stripe.com')"] = None,
-        competitor_domain: Annotated[str | None, "Competitor domain for 'gap' analysis (e.g., 'paypal.com')"] = None,
+        keyword: Annotated[Optional[str], "Seed keyword for 'similar' analysis (e.g., 'payment gateway')"] = None,
+        target_domain: Annotated[Optional[str], "Your domain for 'gap' analysis (e.g., 'stripe.com')"] = None,
+        competitor_domain: Annotated[Optional[str], "Competitor domain for 'gap' analysis (e.g., 'paypal.com')"] = None,
         source: Annotated[str, "Regional database - country code (e.g., 'us', 'uk', 'ca')"] = "us",
         limit: Annotated[int, "Maximum number of keywords to return (1-100)"] = 50,
     ) -> str:
@@ -621,8 +621,8 @@ Be helpful, accurate, and create high-quality artifacts.""",
 async def run_agent_agentic(
     user_input: str,
     db: Session,
-    conversation_history: list[dict[str, str]] | None = None,
-    previous_response_id: str | None = None
+    conversation_history: Optional[List[Dict[str, str]]] = None,
+    previous_response_id: Optional[str] = None
 ) -> AsyncGenerator[dict[str, Any], None]:
     """
     Run the agent with streaming support for the frontend.
