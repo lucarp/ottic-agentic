@@ -23,6 +23,7 @@ interface TerminalProps {
   isConnected: boolean;
   onSendMessage: (content: string) => void;
   onSendContinue: (originalInput: string, responseId: string) => void;
+  onCancelProcessing: () => void;
   onCollapseChange?: (collapsed: boolean) => void;
   onWidthChange?: (width: number) => void;
 }
@@ -60,7 +61,7 @@ const THINKING_NOUNS = [
   'stories', 'positioning', 'essence', 'markets', 'landscapes',
 ];
 
-export const Terminal = ({ messages, isConnected, onSendMessage, onSendContinue, onCollapseChange, onWidthChange }: TerminalProps) => {
+export const Terminal = ({ messages, isConnected, onSendMessage, onSendContinue, onCancelProcessing, onCollapseChange, onWidthChange }: TerminalProps) => {
   const [input, setInput] = useState('');
   const [lastUserInput, setLastUserInput] = useState('');
   const [pendingResponseId, setPendingResponseId] = useState<string | null>(null);
@@ -177,11 +178,21 @@ export const Terminal = ({ messages, isConnected, onSendMessage, onSendContinue,
         e.preventDefault();
         setIsCollapsed(prev => !prev);
       }
+
+      // ESC to cancel processing
+      if (e.key === 'Escape' && isProcessing) {
+        e.preventDefault();
+        console.log('⚠️ ESC pressed - canceling processing');
+        onCancelProcessing();
+        setCurrentStreamingText('');
+        setCurrentStreamingReasoning('');
+        setIsProcessing(false);
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
+  }, [isProcessing, onCancelProcessing]);
 
   // Resize handlers
   useEffect(() => {

@@ -6,7 +6,7 @@ import { MainContent } from './components/MainContent';
 import { ArtifactViewer } from './components/ArtifactViewer';
 
 function App() {
-  const { isConnected, messages, artifacts, sendMessage, sendContinue } = useWebSocket();
+  const { isConnected, messages, artifacts, sendMessage, sendContinue, cancelProcessing } = useWebSocket();
   const [activeTab, setActiveTab] = useState('templates');
   const [terminalCollapsed, setTerminalCollapsed] = useState(true);
   const [terminalWidth, setTerminalWidth] = useState(500);
@@ -27,6 +27,7 @@ function App() {
           isConnected={isConnected}
           onSendMessage={sendMessage}
           onSendContinue={sendContinue}
+          onCancelProcessing={cancelProcessing}
           onCollapseChange={setTerminalCollapsed}
           onWidthChange={setTerminalWidth}
         />

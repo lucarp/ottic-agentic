@@ -7,6 +7,7 @@ interface WebSocketState {
   artifacts: Artifact[];
   sendMessage: (content: string) => void;
   sendContinue: (originalInput: string, responseId: string) => void;
+  cancelProcessing: () => void;
 }
 
 const WS_URL = 'ws://localhost:8000/ws';
@@ -112,6 +113,27 @@ export const useWebSocket = (): WebSocketState => {
     }
   }, []);
 
+  const cancelProcessing = useCallback(() => {
+    console.log('⚠️ Canceling processing - closing and reconnecting WebSocket');
+    if (wsRef.current) {
+      // Close the current connection (will trigger reconnect)
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+    // Clear messages to stop showing processing state
+    setMessages((prev) => {
+      // Keep only non-streaming messages
+      const filtered = prev.filter(
+        (msg) => !['text_delta', 'reasoning_delta', 'tool_execution'].includes(msg.type)
+      );
+      return filtered;
+    });
+    // Force reconnect
+    setTimeout(() => {
+      connect();
+    }, 100);
+  }, [connect]);
+
   useEffect(() => {
     // Only connect once on mount
     connect();
@@ -135,5 +157,6 @@ export const useWebSocket = (): WebSocketState => {
     artifacts,
     sendMessage,
     sendContinue,
+    cancelProcessing,
   };
 };
