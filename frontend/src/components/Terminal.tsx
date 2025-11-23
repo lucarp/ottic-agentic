@@ -489,7 +489,6 @@ export const Terminal = ({ messages, isConnected, onSendMessage, onSendContinue,
                 </TooltipTrigger>
                 <TooltipContent>
                   <p>Collapse sidebar</p>
-                  <p className="text-xs opacity-90">Cmd+K</p>
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -508,7 +507,6 @@ export const Terminal = ({ messages, isConnected, onSendMessage, onSendContinue,
 ┌─ Ottic Agentic Terminal ────────────────────┐
 │ Type your message to interact with AI
 │ Press ↑↓ to navigate command history
-│ Press Cmd+K to toggle sidebar
 └──────────────────────────────────────────────┘`}
               </div>
             )}
@@ -579,7 +577,7 @@ export const Terminal = ({ messages, isConnected, onSendMessage, onSendContinue,
             <div className="text-muted-foreground font-mono text-xs mt-2 pl-6">
               {isProcessing
                 ? 'Press ESC to interrupt execution'
-                : 'Press ↑↓ for history • Shift+Enter for new line • Cmd+K to toggle'}
+                : 'Press ↑↓ for history • Shift+Enter for new line'}
             </div>
           </div>
         </div>

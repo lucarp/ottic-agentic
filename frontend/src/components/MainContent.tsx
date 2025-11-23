@@ -72,8 +72,8 @@ export const MainContent = () => {
     <div className="flex-1 overflow-auto bg-white">
       <div className="max-w-7xl mx-auto p-8">
         <div className="mb-8">
-          <h2 className="text-2xl font-semibold font-mono mb-2">Templates</h2>
-          <p className="text-sm text-muted-foreground font-mono">
+          <h2 className="text-2xl font-semibold font-mono mb-2 text-slate-900">Templates</h2>
+          <p className="text-sm text-slate-600 font-mono">
             Start with a template to accelerate your marketing research and content creation
           </p>
         </div>
@@ -106,7 +106,7 @@ export const MainContent = () => {
                 </p>
 
                 {/* Category Badge */}
-                <div className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-mono font-medium bg-[#06ff83]/10 text-[#009c4e] border border-[#06ff83]/30">
+                <div className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-mono font-medium bg-slate-100 text-slate-700 border border-slate-300">
                   {template.category}
                 </div>
               </CardContent>
