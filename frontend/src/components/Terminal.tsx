@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import type { WebSocketMessage } from '@/types';
@@ -99,10 +100,20 @@ export const Terminal = ({ messages, isConnected, onSendMessage, onSendContinue,
     scrollToBottom();
   }, [messages, currentStreamingText, currentStreamingReasoning]);
 
-  // Auto-focus textarea on mount
+  // Auto-focus textarea on mount and when expanding
   useEffect(() => {
-    setTimeout(() => textareaRef.current?.focus(), 100);
-  }, []);
+    if (!isCollapsed) {
+      // Multiple attempts to ensure focus works
+      const focusTextarea = () => {
+        textareaRef.current?.focus();
+        textareaRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      };
+
+      setTimeout(focusTextarea, 0);
+      setTimeout(focusTextarea, 100);
+      setTimeout(focusTextarea, 300);
+    }
+  }, [isCollapsed]);
 
   // Thinking animation
   useEffect(() => {
@@ -456,8 +467,9 @@ export const Terminal = ({ messages, isConnected, onSendMessage, onSendContinue,
       {/* Main Terminal Sidebar */}
       {!isCollapsed && (
         <div
-          className="fixed left-0 top-14 h-[calc(100vh-3.5rem)] bg-background border-r-4 border-primary flex flex-col z-40 transition-all shadow-xl"
+          className="fixed left-0 top-14 h-[calc(100vh-3.5rem)] bg-background border-r-4 border-primary flex flex-col z-40 transition-all shadow-xl cursor-text"
           style={{ width: sidebarWidth }}
+          onClick={() => textareaRef.current?.focus()}
         >
           {/* Resize Handle */}
           <div
@@ -495,7 +507,10 @@ export const Terminal = ({ messages, isConnected, onSendMessage, onSendContinue,
           </div>
 
           {/* Messages Area */}
-          <ScrollArea className="flex-1 p-4">
+          <ScrollArea
+            className="flex-1 p-4 cursor-text"
+            onClick={() => textareaRef.current?.focus()}
+          >
             {/* Welcome Message */}
             {messages.length === 0 && (
               <div className="text-secondary font-mono text-xs leading-relaxed whitespace-pre-wrap mb-6">
@@ -549,7 +564,10 @@ export const Terminal = ({ messages, isConnected, onSendMessage, onSendContinue,
           </ScrollArea>
 
           {/* Input Area */}
-          <div className="p-4 bg-muted border-t-2 border-primary">
+          <div
+            className="p-4 bg-muted border-t-2 border-primary cursor-text"
+            onClick={() => textareaRef.current?.focus()}
+          >
             <form onSubmit={handleSubmit} className="flex gap-2 items-start">
               <span className="text-primary font-mono text-sm pt-2">{'>'}</span>
               <Textarea
@@ -563,9 +581,11 @@ export const Terminal = ({ messages, isConnected, onSendMessage, onSendContinue,
                   target.style.height = Math.min(target.scrollHeight, 150) + 'px';
                 }}
                 onKeyDown={handleKeyDown}
-                placeholder="Type a command or ask naturally..."
+                placeholder={isConnected ? "Type a command or ask naturally..." : "Connecting to server..."}
                 disabled={!isConnected}
-                className="flex-1 min-h-[38px] max-h-[150px] bg-background border-2 border-primary text-accent font-mono text-sm resize-none focus-visible:ring-primary"
+                autoFocus={!isCollapsed}
+                tabIndex={0}
+                className="flex-1 min-h-[38px] max-h-[150px] bg-background border-2 border-primary text-accent font-mono text-sm resize-none focus-visible:ring-primary focus:ring-2 focus:ring-primary"
                 rows={1}
                 style={{
                   height: 'auto',
