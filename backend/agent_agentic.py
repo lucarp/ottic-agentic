@@ -32,6 +32,7 @@ from schemas import (
     KeywordData,
 )
 from seranking_client import get_seranking_client
+from ottic_prompt import get_ottic_system_prompt
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -577,32 +578,8 @@ def create_agent_with_tools(db_session: Session) -> Agent:
     ] + artifact_tools  # All artifact creation tools
 
     agent = Agent(
-        name="Artifact Assistant",
-        instructions="""You are an AI assistant specialized in creating structured artifacts.
-
-You have access to:
-- Web search to find current information
-- URL fetching to read content from webpages
-- CSV creation for tabular data
-- Chart creation for data visualizations
-- Markdown documents for reports
-- Code snippets with syntax highlighting
-- HTML content for rich displays
-- Payment links for transactions
-- SEO analysis tools powered by SE Ranking API:
-  * Domain SEO overview (traffic, keywords, value estimates)
-  * Competitor analysis (find competing domains and keyword overlaps)
-  * Keyword research (similar keywords, competitor keyword gaps)
-
-When users request information or data:
-1. Use web search if you need current information
-2. Fetch URLs if you need to read specific webpages
-3. For SEO-related requests, use the SEO analysis tools to provide data-driven insights
-4. Create appropriate artifacts to present the information clearly
-5. Always create artifacts in the user's requested language
-6. Provide clear, well-structured outputs
-
-Be helpful, accurate, and create high-quality artifacts.""",
+        name="Ottic",
+        instructions=get_ottic_system_prompt(),
         tools=tools,
         model="gpt-5",
         model_settings=ModelSettings(
