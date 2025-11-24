@@ -101,7 +101,7 @@ export const Terminal = ({ messages, isConnected, onSendMessage, onSendContinue,
     scrollToBottom();
   }, [messages, currentStreamingText, currentStreamingReasoning]);
 
-  // Auto-focus textarea on mount and when expanding
+  // Auto-focus textarea - keep it always focused when terminal is open
   useEffect(() => {
     if (!isCollapsed) {
       // Multiple attempts to ensure focus works
@@ -115,6 +115,29 @@ export const Terminal = ({ messages, isConnected, onSendMessage, onSendContinue,
       setTimeout(focusTextarea, 300);
     }
   }, [isCollapsed]);
+
+  // Re-focus after processing completes
+  useEffect(() => {
+    if (!isCollapsed && !isProcessing) {
+      const timer = setTimeout(() => {
+        textareaRef.current?.focus();
+      }, 100);
+      return () => clearTimeout(timer);
+    }
+  }, [isProcessing, isCollapsed]);
+
+  // Keep focus when messages change (response completed)
+  useEffect(() => {
+    if (!isCollapsed && messages.length > 0) {
+      const lastMessage = messages[messages.length - 1];
+      // Re-focus after assistant responds
+      if (lastMessage?.type === 'assistant_message') {
+        setTimeout(() => {
+          textareaRef.current?.focus();
+        }, 200);
+      }
+    }
+  }, [messages, isCollapsed]);
 
   // Thinking animation
   useEffect(() => {
@@ -244,6 +267,8 @@ export const Terminal = ({ messages, isConnected, onSendMessage, onSendContinue,
       await navigator.clipboard.writeText(content);
       setCopiedMessageId(messageId);
       setTimeout(() => setCopiedMessageId(null), 2000);
+      // Re-focus textarea after copy
+      setTimeout(() => textareaRef.current?.focus(), 50);
     } catch (err) {
       console.error('Failed to copy:', err);
     }
@@ -254,6 +279,8 @@ export const Terminal = ({ messages, isConnected, onSendMessage, onSendContinue,
       ...prev,
       [messageId]: prev[messageId] === type ? null : type,
     }));
+    // Re-focus textarea after feedback
+    setTimeout(() => textareaRef.current?.focus(), 50);
   };
 
   const toggleToolCollapse = (messageId: string) => {
@@ -261,6 +288,8 @@ export const Terminal = ({ messages, isConnected, onSendMessage, onSendContinue,
       ...prev,
       [messageId]: !prev[messageId],
     }));
+    // Re-focus textarea after toggling
+    setTimeout(() => textareaRef.current?.focus(), 50);
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -323,6 +352,7 @@ export const Terminal = ({ messages, isConnected, onSendMessage, onSendContinue,
                       variant="ghost"
                       size="sm"
                       className="h-7 text-secondary hover:text-primary hover:bg-muted"
+                      onMouseDown={(e) => e.preventDefault()}
                       onClick={() => handleCopy(message.content, messageId)}
                     >
                       {copiedMessageId === messageId ? (
@@ -343,6 +373,7 @@ export const Terminal = ({ messages, isConnected, onSendMessage, onSendContinue,
                       variant="ghost"
                       size="sm"
                       className="h-7 text-secondary hover:text-primary hover:bg-muted"
+                      onMouseDown={(e) => e.preventDefault()}
                       onClick={() => handleFeedback(messageId, 'up')}
                     >
                       <ThumbsUp className={`h-3 w-3 ${feedback[messageId] === 'up' ? 'fill-primary' : ''}`} />
@@ -357,6 +388,7 @@ export const Terminal = ({ messages, isConnected, onSendMessage, onSendContinue,
                       variant="ghost"
                       size="sm"
                       className="h-7 text-secondary hover:text-destructive hover:bg-muted"
+                      onMouseDown={(e) => e.preventDefault()}
                       onClick={() => handleFeedback(messageId, 'down')}
                     >
                       <ThumbsDown className={`h-3 w-3 ${feedback[messageId] === 'down' ? 'fill-destructive' : ''}`} />
