@@ -34,7 +34,7 @@ function App() {
 
         {/* Main Content Area - shows different content based on active tab */}
         <div
-          className="flex-1 h-full transition-all duration-300"
+          className="flex-1 h-full transition-[margin-left] duration-200 ease-out"
           style={{ marginLeft: `${contentMarginLeft}px` }}
         >
           {activeTab === 'preview' && (

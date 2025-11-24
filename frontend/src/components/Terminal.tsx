@@ -491,10 +491,10 @@ export const Terminal = ({ messages, isConnected, onSendMessage, onSendContinue,
             <TooltipTrigger asChild>
               <div
                 onClick={() => setIsCollapsed(false)}
-                className="fixed left-0 top-14 h-[calc(100vh-3.5rem)] w-12 bg-[#0d1b13] border-r-2 border-[#06ff83]/30 flex flex-col items-center justify-center cursor-pointer hover:bg-[#122319] hover:border-[#06ff83]/50 transition-all z-50 group gap-2"
+                className="fixed left-0 top-14 h-[calc(100vh-3.5rem)] w-12 bg-[#0d1b13] border-r-2 border-[#06ff83]/30 flex flex-col items-center justify-center cursor-pointer hover:bg-[#122319] hover:border-[#06ff83]/50 transition-[background-color,border-color] duration-150 ease-in-out z-50 group gap-2"
               >
-                <ChevronRight className="h-5 w-5 text-[#06ff83] group-hover:translate-x-0.5 transition-transform" />
-                <div className="writing-mode-vertical text-[#06ff83] font-mono text-xs font-semibold tracking-wider transition-colors">
+                <ChevronRight className="h-5 w-5 text-[#06ff83] group-hover:translate-x-0.5 transition-transform duration-150" />
+                <div className="writing-mode-vertical text-[#06ff83] font-mono text-xs font-semibold tracking-wider transition-colors duration-150">
                   gtm_terminal:~$
                 </div>
               </div>
@@ -510,7 +510,7 @@ export const Terminal = ({ messages, isConnected, onSendMessage, onSendContinue,
       {/* Main Terminal Sidebar */}
       {!isCollapsed && (
         <div
-          className="fixed left-0 top-14 h-[calc(100vh-3.5rem)] bg-background border-r-4 border-primary flex flex-col z-40 transition-all shadow-xl cursor-text"
+          className="fixed left-0 top-14 h-[calc(100vh-3.5rem)] bg-background border-r-4 border-primary flex flex-col z-40 shadow-xl cursor-text"
           style={{ width: sidebarWidth }}
           onClick={() => textareaRef.current?.focus()}
         >
